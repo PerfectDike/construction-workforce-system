@@ -1,8 +1,21 @@
-This repository contains the shared operational prototype. Machine-learning work is maintained separately.
+# Construction Workforce System
 
-## Local setup
+Welcome! This repository contains the shared operational prototype for the Construction Workforce System. Machine-learning work is maintained separately.
 
-Install Node.js 20.19+ (or 22.12+) and PostgreSQL. In `backend`, copy `.env.example` to `.env` and set `DATABASE_URL` and `JWT_SECRET` for your local environment. The optional `docker compose up -d` starts the example PostgreSQL service. Use a new empty database for the initial verification.
+## Get started locally
+
+### Prerequisites
+
+- Node.js **20.19 or later** (or **22.12 or later**)
+- PostgreSQL
+
+You can use the optional Docker Compose setup to start the project's supporting services, if preferred.
+
+### Configure the backend
+
+From the `backend` directory, copy `.env.example` to `.env` and set `DATABASE_URL` and `JWT_SECRET` to values for your local environment.
+
+Then install dependencies, prepare the database, and start the API:
 
 ```powershell
 cd backend
@@ -14,15 +27,26 @@ npm test
 npm start
 ```
 
-In a second terminal:
+The API health check is available at [http://localhost:5000/api/health](http://localhost:5000/api/health).
+
+### Start the frontend
+
+Keep the backend running, open a second terminal, and run:
 
 ```powershell
 cd frontend
 npm ci
 npm run dev
-# or: npm run build
 ```
 
-The API health endpoint is `http://localhost:5000/api/health`. The seed creates fictional accounts from the shared fixture, using their `example.test` emails as login labels and `DemoPass123!` as the local demonstration password. These credentials are for local fictional data only. The seed adds missing fixture records without deleting or resetting existing records; use a fresh database when a clean scenario is required.
+To create a production build instead, run `npm run build` from the `frontend` directory.
 
-The source fixture's first baseline supplies the initial working task dates. Seed data does not create approved baselines or later workflow records. Independent expected results are in `backend/test/fixtures/expected-results.json`.
+## Demo data
+
+The seed command creates fictional accounts from the shared fixture. Use each account's `example.test` email address as its login label; the demo password is `DemoPass123!`.
+
+The fixture's first baseline provides the initial working task dates. The seed does not create approved baselines or later workflow records, so those need to be created through the application when testing those workflows.
+
+## Tests
+
+Run the backend test suite from the `backend` directory with `npm test`. Independent expected results for the tests are maintained under `backend/test`.
