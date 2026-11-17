@@ -203,6 +203,7 @@ model ProjectMembership {
   @@id([userId, projectId])
 }
 model SiteUpdate {
+  entryKey String?
   id Int @id @default(autoincrement())
   taskId Int
   allocationId Int?
@@ -248,3 +249,4 @@ model ProvenanceEvent {
   actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
   @@index([entityType, entityId])
 }
+
