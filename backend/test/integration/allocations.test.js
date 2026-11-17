@@ -1,4 +1,4 @@
-﻿const request = require('supertest')
+const request = require('supertest')
 const { app } = require('../../src/app')
 const { prisma } = require('../../src/db')
 const dbSuite = process.env.RUN_DB_TESTS === '1' ? describe : describe.skip
@@ -25,9 +25,11 @@ dbSuite('allocations with a seeded test database', () => {
     expect(extra.status).toBe(422)
     expect(extra.body.error.code).toBe('OVER_CAPACITY')
     const missing = await send({ workerId: 'W002', taskId: 'T103', workDate: '2026-11-11', hours: 1 })
-    expect(missing.status).toBe(422)\n    expect(missing.body.error.code).toBe('SKILL_MISMATCH')
+    expect(missing.status).toBe(422)
+    expect(missing.body.error.code).toBe('SKILL_MISMATCH')
     const total = await prisma.allocation.aggregate({ where: { worker: { sharedId: 'W001' }, workDate: new Date('2026-11-04T00:00:00.000Z'), status: 'APPROVED' }, _sum: { allocatedHours: true } })
     expect(Number(total._sum.allocatedHours)).toBe(8)
   })
 })
+
 
