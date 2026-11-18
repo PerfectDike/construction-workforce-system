@@ -50,7 +50,19 @@ router.get('/tasks/:taskId/workflow', async (req, res, next) => {
       select: { id: true, versionNo: true },
       orderBy: { versionNo: 'desc' }
     })
-    res.json({ task, permissions: { plan: manage }, baselines })
+    const [allocations, workers] = await Promise.all([
+      prisma.allocation.findMany({
+        where: { taskId: task.id, status: 'APPROVED' },
+        select: { id: true, workDate: true, allocatedHours: true, worker: { select: { label: true, sharedId: true } } },
+        orderBy: [{ workDate: 'asc' }, { id: 'asc' }]
+      }),
+      manage ? prisma.worker.findMany({
+        where: { sharedId: { not: null } },
+        select: { sharedId: true, label: true },
+        orderBy: { sharedId: 'asc' }
+      }) : []
+    ])
+    res.json({ task, permissions: { plan: manage, allocate: manage }, baselines, allocations, workers })
   } catch (e) { next(e) }
 })
 

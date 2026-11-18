@@ -80,6 +80,32 @@ function Planning({ workflow, busy, mutate }) {
   </section>
 }
 
+function Workforce({ workflow, busy, mutate }) {
+  const { task, workers, allocations, baselines } = workflow
+  return <section>
+    <h3>Worker allocations</h3>
+    {allocations.length ? <ul>{allocations.map(row =>
+      <li key={row.id}>{row.worker.label} ({row.worker.sharedId}) · {day(row.workDate)} · {row.allocatedHours} hours · Allocation {row.id}</li>
+    )}</ul> : <p>No approved allocations.</p>}
+    {workflow.permissions.allocate && task.sharedId && baselines.length > 0 && workers.length > 0 &&
+      <ActionForm button="Allocate worker" busy={busy} onSave={async values => {
+        await mutate('/allocations', 'POST', {
+          workerId: values.get('workerId'), taskId: task.sharedId,
+          workDate: values.get('workDate'), hours: Number(values.get('hours'))
+        })
+        return 'Worker allocated.'
+      }}>
+        <label>Worker<select name="workerId" required>
+          <option value="">Choose a worker</option>
+          {workers.map(worker => <option key={worker.sharedId} value={worker.sharedId}>{worker.label} ({worker.sharedId})</option>)}
+        </select></label>
+        <label>Allocation date<input name="workDate" type="date" required /></label>
+        <label>Allocation hours<input name="hours" type="number" min="0.01" step="0.01" required /></label>
+      </ActionForm>}
+    {workflow.permissions.allocate && !baselines.length && <p>Approve a project baseline to allocate workers.</p>}
+  </section>
+}
+
 function TaskWorkspace({ taskId, session }) {
   const [workflow, setWorkflow] = useState(null)
   const [error, setError] = useState('')
@@ -125,6 +151,7 @@ function TaskWorkspace({ taskId, session }) {
       <h2>{workflow.task.sharedId ?? workflow.task.taskCode} · {workflow.task.title}</h2>
       <p>{workflow.task.project.name} · Working dates {day(workflow.task.startDate)} to {day(workflow.task.finishDate)}</p>
       {workflow.permissions.plan && <Planning workflow={workflow} busy={busy} mutate={mutate} />}
+      <Workforce workflow={workflow} busy={busy} mutate={mutate} />
       {workflow.task.sharedId && <LegacyReport taskId={workflow.task.sharedId} token={token} />}
     </>}
   </>
