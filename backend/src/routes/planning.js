@@ -31,6 +31,29 @@ async function validateDependencies(tx, projectId, taskId, predecessorIds, propo
   return predecessors
 }
 
+router.get('/tasks/:taskId/workflow', async (req, res, next) => {
+  try {
+    const task = await prisma.task.findUnique({
+      where: lookup(req.params.taskId),
+      select: {
+        id: true, sharedId: true, taskCode: true, title: true, startDate: true, finishDate: true,
+        isMilestone: true, projectId: true,
+        project: { select: { id: true, name: true, sharedId: true } },
+        predecessors: { select: { predecessor: { select: { id: true, sharedId: true } } } }
+      }
+    })
+    if (!task) return res.status(404).json({ error: { code: 'TASK_NOT_FOUND', message: 'Task not found' } })
+    const role = await requireProject(req.actor, task.projectId)
+    const manage = ['ADMIN', 'PROJECT_MANAGER'].includes(role)
+    const baselines = await prisma.baseline.findMany({
+      where: { projectId: task.projectId },
+      select: { id: true, versionNo: true },
+      orderBy: { versionNo: 'desc' }
+    })
+    res.json({ task, permissions: { plan: manage }, baselines })
+  } catch (e) { next(e) }
+})
+
 router.get('/tasks/:taskId', async (req, res, next) => {
   try {
     const task = await prisma.task.findUnique({ where: lookup(req.params.taskId), include: { predecessors: { include: { predecessor: true } }, skills: true } })
