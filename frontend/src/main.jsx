@@ -80,6 +80,80 @@ function Planning({ workflow, busy, mutate }) {
   </section>
 }
 
+function Workforce({ workflow, busy, mutate }) {
+  const { task, workers, allocations, baselines } = workflow
+  return <section>
+    <h3>Worker allocations</h3>
+    {allocations.length ? <ul>{allocations.map(row =>
+      <li key={row.id}>{row.worker.label} ({row.worker.sharedId}) · {day(row.workDate)} · {row.allocatedHours} hours · Allocation {row.id}</li>
+    )}</ul> : <p>No approved allocations.</p>}
+    {workflow.permissions.allocate && task.sharedId && baselines.length > 0 && workers.length > 0 &&
+      <ActionForm button="Allocate worker" busy={busy} onSave={async values => {
+        await mutate('/allocations', 'POST', {
+          workerId: values.get('workerId'), taskId: task.sharedId,
+          workDate: values.get('workDate'), hours: Number(values.get('hours'))
+        })
+        return 'Worker allocated.'
+      }}>
+        <label>Worker<select name="workerId" required>
+          <option value="">Choose a worker</option>
+          {workers.map(worker => <option key={worker.sharedId} value={worker.sharedId}>{worker.label} ({worker.sharedId})</option>)}
+        </select></label>
+        <label>Allocation date<input name="workDate" type="date" required /></label>
+        <label>Allocation hours<input name="hours" type="number" min="0.01" step="0.01" required /></label>
+      </ActionForm>}
+    {workflow.permissions.allocate && !baselines.length && <p>Approve a project baseline to allocate workers.</p>}
+  </section>
+}
+
+function SiteUpdates({ workflow, busy, mutate }) {
+  const [allocationId, setAllocationId] = useState('')
+  const { allocations, permissions, updates } = workflow
+  if (!permissions.submitHours && !permissions.approveHours) return null
+  const selected = allocations.find(row => String(row.id) === allocationId)
+  const current = updates.filter(row => row.allocationId === selected?.id && row.status === 'APPROVED')
+  return <section>
+    <h3>Site hours</h3>
+    {updates.length ? <ul>{updates.map(update => <li key={update.id}>
+      <p>Update {update.id} · Allocation {update.allocationId} · {day(update.workDate)} · {update.recordedHours ?? 'No'} hours
+        {' · '}{update.status === 'SUBMITTED' ? 'Awaiting approval' : 'Approved'}
+        {update.supersedesId && ` · Corrects update ${update.supersedesId}`}
+        {update.actualFinishDate && ` · Actual finish ${day(update.actualFinishDate)}`}
+      </p>
+      {update.note && <p>{update.note}</p>}
+      {update.canApprove && <ActionForm button={`Approve update ${update.id}`} busy={busy} onSave={async () => {
+        await mutate(`/site-updates/${update.id}/approve`, 'POST', {})
+        return 'Site update approved.'
+      }} />}
+    </li>)}</ul> : <p>No site hours submitted.</p>}
+    {permissions.submitHours && (allocations.length ? <>
+      <label>Site allocation<select value={allocationId} onChange={event => setAllocationId(event.target.value)} disabled={busy}>
+        <option value="">Choose an allocation</option>
+        {allocations.map(row => <option key={row.id} value={row.id}>
+          Allocation {row.id} · {row.worker.label} · {day(row.workDate)}
+        </option>)}
+      </select></label>
+      {selected && <ActionForm key={selected.id} button="Submit site hours" busy={busy} onSave={async values => {
+        const correction = values.get('correction')
+        await mutate('/site-updates', 'POST', {
+          allocationId: selected.id, workDate: day(selected.workDate), recordedHours: Number(values.get('recordedHours')),
+          actualFinishDate: values.get('actualFinishDate') || undefined, note: values.get('note').trim() || undefined,
+          supersedesId: correction ? Number(correction) : undefined
+        })
+        return 'Site hours submitted for approval.'
+      }}>
+        {current.length > 0 && <label>Correction to approve<select name="correction" required>
+          <option value="">Choose an approved update</option>
+          {current.map(row => <option key={row.id} value={row.id}>Update {row.id} · {row.recordedHours} hours</option>)}
+        </select></label>}
+        <label>Recorded hours<input name="recordedHours" type="number" min="0" step="0.01" required /></label>
+        <label>Actual finish date (optional)<input name="actualFinishDate" type="date" /></label>
+        <label>Site note (optional)<textarea name="note" /></label>
+      </ActionForm>}
+    </> : <p>An approved allocation is needed to submit hours.</p>)}
+  </section>
+}
+
 function TaskWorkspace({ taskId, session }) {
   const [workflow, setWorkflow] = useState(null)
   const [error, setError] = useState('')
@@ -125,32 +199,66 @@ function TaskWorkspace({ taskId, session }) {
       <h2>{workflow.task.sharedId ?? workflow.task.taskCode} · {workflow.task.title}</h2>
       <p>{workflow.task.project.name} · Working dates {day(workflow.task.startDate)} to {day(workflow.task.finishDate)}</p>
       {workflow.permissions.plan && <Planning workflow={workflow} busy={busy} mutate={mutate} />}
-      {workflow.task.sharedId && <LegacyReport taskId={workflow.task.sharedId} token={token} />}
+      <Workforce workflow={workflow} busy={busy} mutate={mutate} />
+      <SiteUpdates workflow={workflow} busy={busy} mutate={mutate} />
+      {workflow.task.sharedId && <TaskReport workflow={workflow} token={token} />}
     </>}
   </>
 }
 
-function LegacyReport({ taskId, token }) {
+function TaskReport({ workflow, token }) {
+  const [baselineId, setBaselineId] = useState('')
   const [report, setReport] = useState(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const { task, baselines } = workflow
+
+  useEffect(() => {
+    if (!baselines.length) return
+    const controller = new AbortController()
+    const query = baselineId ? `?baselineId=${encodeURIComponent(baselineId)}` : ''
+    setReport(null)
+    setError('')
+    setLoading(true)
+    call(`/reports/tasks/${encodeURIComponent(task.sharedId)}${query}`, { token, signal: controller.signal })
+      .then(result => { if (!controller.signal.aborted) setReport(result) })
+      .catch(err => { if (!controller.signal.aborted) setError(err.message) })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
+  }, [baselineId, workflow, token])
+
   return <section>
     <h3>Task report</h3>
-    <ActionForm button="Show report" onSave={async values => {
-      setReport(null)
-      const baseline = values.get('baseline')
-      setReport(await call(`/reports/tasks/${encodeURIComponent(taskId)}${baseline ? `?baselineId=${encodeURIComponent(baseline)}` : ''}`, { token }))
-    }}>
-      <label>Baseline ID (optional)<input name="baseline" inputMode="numeric" /></label>
-    </ActionForm>
-    {report && <>
+    {!baselines.length && <p>Approve a project baseline to view the task report.</p>}
+    {baselines.length > 0 && <label>Report baseline<select value={baselineId} onChange={event => setBaselineId(event.target.value)}>
+      <option value="">Latest approved baseline</option>
+      {baselines.map(baseline => <option value={baseline.id} key={baseline.id}>Version {baseline.versionNo}</option>)}
+    </select></label>}
+    {loading && <p role="status">Loading task report…</p>}
+    {error && <p role="alert">{error}</p>}
+    {baselines.length > 0 && report && <>
       <p>Approved baseline version {report.baselineVersion} (ID {report.baselineId}).</p>
       <dl>
         <dt>Baseline finish</dt><dd>{day(report.baselineFinish) || 'Not in baseline'}</dd>
         <dt>Actual finish</dt><dd>{day(report.actualFinish) || 'Not reported'}</dd>
-        <dt>Finish variance</dt><dd>{report.finishVarianceDays == null ? 'Not available' : `${report.finishVarianceDays} calendar days`}</dd>
+        <dt>Finish variance</dt><dd>{report.finishVarianceDays == null ? 'Not available' : `${report.finishVarianceDays > 0 ? '+' : ''}${report.finishVarianceDays} calendar days`}</dd>
         <dt>Planned allocation hours</dt><dd>{report.plannedHours}</dd>
         <dt>Approved recorded hours</dt><dd>{report.recordedHours ?? 'Not reported'}</dd>
       </dl>
-      <details><summary>View source records</summary><pre>{JSON.stringify(report.sources, null, 2)}</pre></details>
+      <details>
+        <summary>View source records</summary>
+        <h4>Baseline task</h4>
+        {report.sources.baselineTask ? <p>Baseline {report.baselineId} · Task {report.taskId} · Finish {day(report.sources.baselineTask.finishDate)}</p> : <p>Task absent from selected baseline.</p>}
+        <h4>Approved allocations</h4>
+        {report.sources.allocations.length ? <ul>{report.sources.allocations.map(row =>
+          <li key={row.id}>Allocation {row.id} · {day(row.workDate)} · {row.allocatedHours} planned hours</li>
+        )}</ul> : <p>No source allocations.</p>}
+        <h4>Current approved site updates</h4>
+        {report.sources.updates.length ? <ul>{report.sources.updates.map(row =>
+          <li key={row.id}>Update {row.id} · Allocation {row.allocationId} · {day(row.workDate)} · {row.recordedHours ?? 'No'} recorded hours
+            {row.actualFinishDate && ` · Actual finish ${day(row.actualFinishDate)}`}</li>
+        )}</ul> : <p>No approved source updates.</p>}
+      </details>
     </>}
   </section>
 }
