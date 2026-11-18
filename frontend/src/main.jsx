@@ -201,32 +201,64 @@ function TaskWorkspace({ taskId, session }) {
       {workflow.permissions.plan && <Planning workflow={workflow} busy={busy} mutate={mutate} />}
       <Workforce workflow={workflow} busy={busy} mutate={mutate} />
       <SiteUpdates workflow={workflow} busy={busy} mutate={mutate} />
-      {workflow.task.sharedId && <LegacyReport taskId={workflow.task.sharedId} token={token} />}
+      {workflow.task.sharedId && <TaskReport workflow={workflow} token={token} />}
     </>}
   </>
 }
 
-function LegacyReport({ taskId, token }) {
+function TaskReport({ workflow, token }) {
+  const [baselineId, setBaselineId] = useState('')
   const [report, setReport] = useState(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const { task, baselines } = workflow
+
+  useEffect(() => {
+    if (!baselines.length) return
+    const controller = new AbortController()
+    const query = baselineId ? `?baselineId=${encodeURIComponent(baselineId)}` : ''
+    setReport(null)
+    setError('')
+    setLoading(true)
+    call(`/reports/tasks/${encodeURIComponent(task.sharedId)}${query}`, { token, signal: controller.signal })
+      .then(result => { if (!controller.signal.aborted) setReport(result) })
+      .catch(err => { if (!controller.signal.aborted) setError(err.message) })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
+  }, [baselineId, workflow, token])
+
   return <section>
     <h3>Task report</h3>
-    <ActionForm button="Show report" onSave={async values => {
-      setReport(null)
-      const baseline = values.get('baseline')
-      setReport(await call(`/reports/tasks/${encodeURIComponent(taskId)}${baseline ? `?baselineId=${encodeURIComponent(baseline)}` : ''}`, { token }))
-    }}>
-      <label>Baseline ID (optional)<input name="baseline" inputMode="numeric" /></label>
-    </ActionForm>
-    {report && <>
+    {!baselines.length && <p>Approve a project baseline to view the task report.</p>}
+    {baselines.length > 0 && <label>Report baseline<select value={baselineId} onChange={event => setBaselineId(event.target.value)}>
+      <option value="">Latest approved baseline</option>
+      {baselines.map(baseline => <option value={baseline.id} key={baseline.id}>Version {baseline.versionNo}</option>)}
+    </select></label>}
+    {loading && <p role="status">Loading task report…</p>}
+    {error && <p role="alert">{error}</p>}
+    {baselines.length > 0 && report && <>
       <p>Approved baseline version {report.baselineVersion} (ID {report.baselineId}).</p>
       <dl>
         <dt>Baseline finish</dt><dd>{day(report.baselineFinish) || 'Not in baseline'}</dd>
         <dt>Actual finish</dt><dd>{day(report.actualFinish) || 'Not reported'}</dd>
-        <dt>Finish variance</dt><dd>{report.finishVarianceDays == null ? 'Not available' : `${report.finishVarianceDays} calendar days`}</dd>
+        <dt>Finish variance</dt><dd>{report.finishVarianceDays == null ? 'Not available' : `${report.finishVarianceDays > 0 ? '+' : ''}${report.finishVarianceDays} calendar days`}</dd>
         <dt>Planned allocation hours</dt><dd>{report.plannedHours}</dd>
         <dt>Approved recorded hours</dt><dd>{report.recordedHours ?? 'Not reported'}</dd>
       </dl>
-      <details><summary>View source records</summary><pre>{JSON.stringify(report.sources, null, 2)}</pre></details>
+      <details>
+        <summary>View source records</summary>
+        <h4>Baseline task</h4>
+        {report.sources.baselineTask ? <p>Baseline {report.baselineId} · Task {report.taskId} · Finish {day(report.sources.baselineTask.finishDate)}</p> : <p>Task absent from selected baseline.</p>}
+        <h4>Approved allocations</h4>
+        {report.sources.allocations.length ? <ul>{report.sources.allocations.map(row =>
+          <li key={row.id}>Allocation {row.id} · {day(row.workDate)} · {row.allocatedHours} planned hours</li>
+        )}</ul> : <p>No source allocations.</p>}
+        <h4>Current approved site updates</h4>
+        {report.sources.updates.length ? <ul>{report.sources.updates.map(row =>
+          <li key={row.id}>Update {row.id} · Allocation {row.allocationId} · {day(row.workDate)} · {row.recordedHours ?? 'No'} recorded hours
+            {row.actualFinishDate && ` · Actual finish ${day(row.actualFinishDate)}`}</li>
+        )}</ul> : <p>No approved source updates.</p>}
+      </details>
     </>}
   </section>
 }
