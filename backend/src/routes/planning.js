@@ -31,6 +31,62 @@ async function validateDependencies(tx, projectId, taskId, predecessorIds, propo
   return predecessors
 }
 
+router.get('/tasks/:taskId/workflow', async (req, res, next) => {
+  try {
+    const task = await prisma.task.findUnique({
+      where: lookup(req.params.taskId),
+      select: {
+        id: true, sharedId: true, taskCode: true, title: true, startDate: true, finishDate: true,
+        isMilestone: true, projectId: true,
+        project: { select: { id: true, name: true, sharedId: true } },
+        predecessors: { select: { predecessor: { select: { id: true, sharedId: true } } } }
+      }
+    })
+    if (!task) return res.status(404).json({ error: { code: 'TASK_NOT_FOUND', message: 'Task not found' } })
+    const role = await requireProject(req.actor, task.projectId)
+    const manage = ['ADMIN', 'PROJECT_MANAGER'].includes(role)
+    const baselines = await prisma.baseline.findMany({
+      where: { projectId: task.projectId },
+      select: { id: true, versionNo: true },
+      orderBy: { versionNo: 'desc' }
+    })
+    const submitHours = ['ADMIN', 'SITE_OFFICER'].includes(role)
+    const [allocations, workers, updates] = await Promise.all([
+      prisma.allocation.findMany({
+        where: { taskId: task.id, status: 'APPROVED' },
+        select: { id: true, workDate: true, allocatedHours: true, worker: { select: { label: true, sharedId: true } } },
+        orderBy: [{ workDate: 'asc' }, { id: 'asc' }]
+      }),
+      manage ? prisma.worker.findMany({
+        where: { sharedId: { not: null } },
+        select: { sharedId: true, label: true },
+        orderBy: { sharedId: 'asc' }
+      }) : [],
+      manage || submitHours ? prisma.siteUpdate.findMany({
+        where: {
+          taskId: task.id,
+          OR: [
+            { status: 'APPROVED', isCurrent: true },
+            { status: 'SUBMITTED', ...(manage ? {} : { authorId: Number(req.actor.sub) }) }
+          ]
+        },
+        select: {
+          id: true, allocationId: true, status: true, workDate: true, recordedHours: true,
+          actualFinishDate: true, note: true, supersedesId: true, authorId: true
+        },
+        orderBy: { id: 'asc' }
+      }) : []
+    ])
+    res.json({
+      task, baselines, allocations, workers,
+      permissions: { plan: manage, allocate: manage, submitHours, approveHours: manage },
+      updates: updates.map(({ authorId, ...update }) => ({
+        ...update, canApprove: manage && update.status === 'SUBMITTED' && authorId !== Number(req.actor.sub)
+      }))
+    })
+  } catch (e) { next(e) }
+})
+
 router.get('/tasks/:taskId', async (req, res, next) => {
   try {
     const task = await prisma.task.findUnique({ where: lookup(req.params.taskId), include: { predecessors: { include: { predecessor: true } }, skills: true } })
