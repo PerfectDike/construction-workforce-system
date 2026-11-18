@@ -50,7 +50,8 @@ router.get('/tasks/:taskId/workflow', async (req, res, next) => {
       select: { id: true, versionNo: true },
       orderBy: { versionNo: 'desc' }
     })
-    const [allocations, workers] = await Promise.all([
+    const submitHours = ['ADMIN', 'SITE_OFFICER'].includes(role)
+    const [allocations, workers, updates] = await Promise.all([
       prisma.allocation.findMany({
         where: { taskId: task.id, status: 'APPROVED' },
         select: { id: true, workDate: true, allocatedHours: true, worker: { select: { label: true, sharedId: true } } },
@@ -60,9 +61,29 @@ router.get('/tasks/:taskId/workflow', async (req, res, next) => {
         where: { sharedId: { not: null } },
         select: { sharedId: true, label: true },
         orderBy: { sharedId: 'asc' }
+      }) : [],
+      manage || submitHours ? prisma.siteUpdate.findMany({
+        where: {
+          taskId: task.id,
+          OR: [
+            { status: 'APPROVED', isCurrent: true },
+            { status: 'SUBMITTED', ...(manage ? {} : { authorId: Number(req.actor.sub) }) }
+          ]
+        },
+        select: {
+          id: true, allocationId: true, status: true, workDate: true, recordedHours: true,
+          actualFinishDate: true, note: true, supersedesId: true, authorId: true
+        },
+        orderBy: { id: 'asc' }
       }) : []
     ])
-    res.json({ task, permissions: { plan: manage, allocate: manage }, baselines, allocations, workers })
+    res.json({
+      task, baselines, allocations, workers,
+      permissions: { plan: manage, allocate: manage, submitHours, approveHours: manage },
+      updates: updates.map(({ authorId, ...update }) => ({
+        ...update, canApprove: manage && update.status === 'SUBMITTED' && authorId !== Number(req.actor.sub)
+      }))
+    })
   } catch (e) { next(e) }
 })
 
