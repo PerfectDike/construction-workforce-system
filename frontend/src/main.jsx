@@ -106,6 +106,54 @@ function Workforce({ workflow, busy, mutate }) {
   </section>
 }
 
+function SiteUpdates({ workflow, busy, mutate }) {
+  const [allocationId, setAllocationId] = useState('')
+  const { allocations, permissions, updates } = workflow
+  if (!permissions.submitHours && !permissions.approveHours) return null
+  const selected = allocations.find(row => String(row.id) === allocationId)
+  const current = updates.filter(row => row.allocationId === selected?.id && row.status === 'APPROVED')
+  return <section>
+    <h3>Site hours</h3>
+    {updates.length ? <ul>{updates.map(update => <li key={update.id}>
+      <p>Update {update.id} · Allocation {update.allocationId} · {day(update.workDate)} · {update.recordedHours ?? 'No'} hours
+        {' · '}{update.status === 'SUBMITTED' ? 'Awaiting approval' : 'Approved'}
+        {update.supersedesId && ` · Corrects update ${update.supersedesId}`}
+        {update.actualFinishDate && ` · Actual finish ${day(update.actualFinishDate)}`}
+      </p>
+      {update.note && <p>{update.note}</p>}
+      {update.canApprove && <ActionForm button={`Approve update ${update.id}`} busy={busy} onSave={async () => {
+        await mutate(`/site-updates/${update.id}/approve`, 'POST', {})
+        return 'Site update approved.'
+      }} />}
+    </li>)}</ul> : <p>No site hours submitted.</p>}
+    {permissions.submitHours && (allocations.length ? <>
+      <label>Site allocation<select value={allocationId} onChange={event => setAllocationId(event.target.value)} disabled={busy}>
+        <option value="">Choose an allocation</option>
+        {allocations.map(row => <option key={row.id} value={row.id}>
+          Allocation {row.id} · {row.worker.label} · {day(row.workDate)}
+        </option>)}
+      </select></label>
+      {selected && <ActionForm key={selected.id} button="Submit site hours" busy={busy} onSave={async values => {
+        const correction = values.get('correction')
+        await mutate('/site-updates', 'POST', {
+          allocationId: selected.id, workDate: day(selected.workDate), recordedHours: Number(values.get('recordedHours')),
+          actualFinishDate: values.get('actualFinishDate') || undefined, note: values.get('note').trim() || undefined,
+          supersedesId: correction ? Number(correction) : undefined
+        })
+        return 'Site hours submitted for approval.'
+      }}>
+        {current.length > 0 && <label>Correction to approve<select name="correction" required>
+          <option value="">Choose an approved update</option>
+          {current.map(row => <option key={row.id} value={row.id}>Update {row.id} · {row.recordedHours} hours</option>)}
+        </select></label>}
+        <label>Recorded hours<input name="recordedHours" type="number" min="0" step="0.01" required /></label>
+        <label>Actual finish date (optional)<input name="actualFinishDate" type="date" /></label>
+        <label>Site note (optional)<textarea name="note" /></label>
+      </ActionForm>}
+    </> : <p>An approved allocation is needed to submit hours.</p>)}
+  </section>
+}
+
 function TaskWorkspace({ taskId, session }) {
   const [workflow, setWorkflow] = useState(null)
   const [error, setError] = useState('')
@@ -152,6 +200,7 @@ function TaskWorkspace({ taskId, session }) {
       <p>{workflow.task.project.name} · Working dates {day(workflow.task.startDate)} to {day(workflow.task.finishDate)}</p>
       {workflow.permissions.plan && <Planning workflow={workflow} busy={busy} mutate={mutate} />}
       <Workforce workflow={workflow} busy={busy} mutate={mutate} />
+      <SiteUpdates workflow={workflow} busy={busy} mutate={mutate} />
       {workflow.task.sharedId && <LegacyReport taskId={workflow.task.sharedId} token={token} />}
     </>}
   </>
