@@ -1,0 +1,25 @@
+# Dependencies and generated output
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+backend/generated/
+frontend/dist/
+coverage/
+
+# Local configuration and tooling
+.env
+backend/.env
+backend/.test-mail/
+.playwright-cli/
+backend/.agents/
+backend/.claude/
+backend/.cursor/
+backend/.devin/
+
+# Local PostgreSQL volume
+.postgres-data/
+
+.workforce-postgres-data/
+
+# Local verification notes
+/FOUNDATION-CHECK.md
