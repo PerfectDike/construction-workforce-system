@@ -1,7 +1,12 @@
 function toDate(value) {
   if (value instanceof Date) return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()))
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw Object.assign(new Error('Invalid calendar date'), { status: 422, code: 'INVALID_DATE' })
+  }
   const date = new Date(`${value}T00:00:00.000Z`)
-  if (Number.isNaN(date.valueOf())) throw new Error('Invalid calendar date')
+  if (Number.isNaN(date.valueOf()) || date.toISOString().slice(0, 10) !== value) {
+    throw Object.assign(new Error('Invalid calendar date'), { status: 422, code: 'INVALID_DATE' })
+  }
   return date
 }
 
