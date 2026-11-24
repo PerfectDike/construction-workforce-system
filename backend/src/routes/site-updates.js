@@ -28,7 +28,32 @@ router.post('/site-updates', async (req, res, next) => {
       finish = toDate(actualFinishDate)
       if (finish.toISOString().slice(0, 10) !== actualFinishDate) throw fail(422, 'INVALID_DATE', 'Enter a valid finish date')
     }
-    const row = await prisma.siteUpdate.create({ data: { entryKey: previous?.entryKey || randomUUID(), taskId: allocation.taskId, allocationId, authorId: Number(req.actor.sub), workDate: day, recordedHours, actualFinishDate: finish, note, supersedesId: previous?.id, status: 'SUBMITTED' } })
+    const row = await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM "Allocation" WHERE id = ${allocationId} FOR NO KEY UPDATE`
+      const currentAllocation = await tx.allocation.findUniqueOrThrow({ where: { id: allocationId } })
+      if (currentAllocation.status !== 'APPROVED') throw fail(409, 'INVALID_ALLOCATION', 'Allocation is no longer approved')
+      if (previous) {
+        const currentOriginal = await tx.siteUpdate.findUniqueOrThrow({ where: { id: previous.id } })
+        if (currentOriginal.status !== 'APPROVED' || !currentOriginal.isCurrent) {
+          throw fail(409, 'STALE_CORRECTION', 'The original entry is no longer current')
+        }
+        const pending = await tx.siteUpdate.findFirst({ where: { supersedesId: previous.id, status: 'SUBMITTED' } })
+        if (pending) throw fail(409, 'DUPLICATE_UPDATE', 'A correction is already awaiting approval')
+      } else {
+        const duplicate = await tx.siteUpdate.findFirst({
+          where: {
+            allocationId,
+            OR: [{ status: 'SUBMITTED', supersedesId: null }, { status: 'APPROVED', isCurrent: true }]
+          }
+        })
+        if (duplicate) throw fail(409, 'DUPLICATE_UPDATE', 'An entry for this allocation is already pending or approved')
+      }
+      return tx.siteUpdate.create({ data: {
+        entryKey: previous?.entryKey || randomUUID(), taskId: allocation.taskId,
+        allocationId, authorId: Number(req.actor.sub), workDate: day,
+        recordedHours, actualFinishDate: finish, note, supersedesId: previous?.id, status: 'SUBMITTED'
+      } })
+    })
     res.status(201).json(row)
   } catch (e) { next(e) }
 })
@@ -53,6 +78,56 @@ router.post('/site-updates/:id/approve', async (req, res, next) => {
     })
     res.json(approved)
   } catch (e) { next(e) }
+})
+router.post('/site-updates/:id/reject', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id)
+    if (!Number.isInteger(id) || id < 1) throw fail(422, 'INVALID_UPDATE', 'Invalid update ID')
+    const update = await prisma.siteUpdate.findUnique({ where: { id }, include: { task: true } })
+    if (!update) throw fail(404, 'NOT_FOUND', 'Update not found')
+    await requireProject(req.actor, update.task.projectId, ['PROJECT_MANAGER'])
+    const reason = typeof req.body.reason === 'string' ? req.body.reason.trim() : ''
+    if (!reason) throw fail(422, 'REASON_REQUIRED', 'Give a reason for the rejection')
+    const rejected = await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM "SiteUpdate" WHERE id = ${id} FOR UPDATE`
+      const current = await tx.siteUpdate.findUniqueOrThrow({ where: { id } })
+      if (current.status !== 'SUBMITTED') throw fail(409, 'INVALID_STATE', 'Update is not awaiting a decision')
+      const saved = await tx.siteUpdate.update({ where: { id }, data: {
+        status: 'REJECTED', decisionReason: reason, approvedById: Number(req.actor.sub)
+      } })
+      await tx.provenanceEvent.create({ data: {
+        entityType: 'SiteUpdate', entityId: id, action: 'REJECTED',
+        fromState: 'SUBMITTED', toState: 'REJECTED', actorId: Number(req.actor.sub), reason
+      } })
+      return saved
+    })
+    res.json(rejected)
+  } catch (error) { next(error) }
+})
+router.post('/site-updates/:id/withdraw', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id)
+    if (!Number.isInteger(id) || id < 1) throw fail(422, 'INVALID_UPDATE', 'Invalid update ID')
+    const update = await prisma.siteUpdate.findUnique({ where: { id }, include: { task: true } })
+    if (!update) throw fail(404, 'NOT_FOUND', 'Update not found')
+    await requireProject(req.actor, update.task.projectId, ['PROJECT_MANAGER'])
+    const reason = typeof req.body.reason === 'string' ? req.body.reason.trim() : ''
+    if (!reason) throw fail(422, 'REASON_REQUIRED', 'Give a reason for the withdrawal')
+    const withdrawn = await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM "SiteUpdate" WHERE id = ${id} FOR UPDATE`
+      const current = await tx.siteUpdate.findUniqueOrThrow({ where: { id } })
+      if (current.status !== 'APPROVED' || !current.isCurrent) throw fail(409, 'INVALID_STATE', 'Only a current approved entry can be withdrawn')
+      const saved = await tx.siteUpdate.update({ where: { id }, data: {
+        status: 'WITHDRAWN', isCurrent: false, decisionReason: reason
+      } })
+      await tx.provenanceEvent.create({ data: {
+        entityType: 'SiteUpdate', entityId: id, action: 'WITHDRAWN',
+        fromState: 'APPROVED', toState: 'WITHDRAWN', actorId: Number(req.actor.sub), reason
+      } })
+      return saved
+    })
+    res.json(withdrawn)
+  } catch (error) { next(error) }
 })
 router.get('/tasks/:taskId/site-updates', async (req, res, next) => {
   try {
