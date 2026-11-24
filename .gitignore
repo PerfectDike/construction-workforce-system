@@ -9,6 +9,8 @@ coverage/
 # Local configuration and tooling
 .env
 backend/.env
+backend/.test-mail/
+.playwright-cli/
 backend/.agents/
 backend/.claude/
 backend/.cursor/
