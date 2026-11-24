@@ -1,6 +1,6 @@
 # Construction Workforce System
 
-Welcome! This repository contains the shared operational prototype for the Construction Workforce System. Machine-learning work is maintained separately.
+Welcome! This repository contains the shared operational prototype for the Construction Workforce System. 
 
 ## Get started locally
 
