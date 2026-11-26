@@ -22,7 +22,7 @@ router.post('/projects/:projectId/accounts', async (req, res, next) => {
     const roleName = req.body.roleName
     if (!/^[a-z0-9._%+-]+@example\.test$/.test(loginLabel) ||
         !['PROJECT_MANAGER', 'SITE_OFFICER', 'VIEWER'].includes(roleName)) {
-      return res.status(422).json({ error: { code: 'INVALID_ACCOUNT', message: 'Enter a fictional example.test address and a project role' } })
+      return res.status(422).json({ error: { code: 'INVALID_ACCOUNT', message: 'Enter an @example.test email address and choose a project role' } })
     }
     const existing = await prisma.user.findUnique({ where: { loginLabel } })
     if (existing) return res.status(409).json({ error: { code: 'ACCOUNT_EXISTS', message: 'Account already exists' } })

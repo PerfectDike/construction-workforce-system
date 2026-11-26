@@ -33,6 +33,25 @@ router.get('/projects/:projectId/baselines', async (req, res, next) => {
     res.json({ baselines })
   } catch (error) { next(error) }
 })
+router.get('/projects/:projectId/tasks', async (req, res, next) => {
+  try {
+    const reference = req.params.projectId
+    const project = await prisma.project.findUnique({ where: /^\d+$/.test(reference) ? { id: Number(reference) } : { sharedId: reference } })
+    if (!project) return res.status(404).json({ error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found' } })
+    await requireProject(req.actor, project.id)
+    const tasks = await prisma.task.findMany({
+      where: { projectId: project.id },
+      select: { id: true, sharedId: true, taskCode: true, title: true, status: true,
+        startDate: true, finishDate: true, isMilestone: true,
+        predecessors: { select: { predecessor: { select: { id: true, sharedId: true, taskCode: true } } } }
+      },
+      orderBy: { taskCode: 'asc' }
+    })
+    res.json({ tasks: tasks.map(({ predecessors, ...task }) => ({ ...task,
+      predecessorIds: predecessors.map(({ predecessor }) => predecessor.sharedId || predecessor.taskCode || String(predecessor.id))
+    })) })
+  } catch (error) { next(error) }
+})
 const bad = (message) => Object.assign(new Error(message), { status: 422 })
 const lookup = value => /^\d+$/.test(value) ? { id: Number(value) } : { sharedId: value }
 
@@ -75,9 +94,14 @@ router.get('/tasks/:taskId/workflow', async (req, res, next) => {
     const manage = ['ADMIN', 'PROJECT_MANAGER'].includes(role)
     const baselines = await prisma.baseline.findMany({
       where: { projectId: task.projectId },
-      select: { id: true, versionNo: true },
+      select: { id: true, versionNo: true, approvedAt: true, reason: true,
+        tasks: { where: { taskId: task.id }, select: { title: true, startDate: true, finishDate: true, isMilestone: true } },
+        dependencies: { where: { successorId: task.id }, select: { predecessorId: true } }
+      },
       orderBy: { versionNo: 'desc' }
     })
+    const projectTaskRefs = await prisma.task.findMany({ where: { projectId: task.projectId }, select: { id: true, sharedId: true, taskCode: true } })
+    const taskRefById = new Map(projectTaskRefs.map(row => [row.id, row.sharedId || row.taskCode || String(row.id)]))
     const submitHours = ['ADMIN', 'SITE_OFFICER'].includes(role)
     const [allocations, workers, updates, allocationHistory] = await Promise.all([
       prisma.allocation.findMany({
@@ -124,8 +148,16 @@ router.get('/tasks/:taskId/workflow', async (req, res, next) => {
         },
         orderBy: { id: 'asc' }
       }) : []
+    const planHistory = manage ? await prisma.provenanceEvent.findMany({
+      where: { entityType: 'Task', entityId: task.id, action: 'WORKING_PLAN_REVISED' },
+      select: { action: true, fromState: true, toState: true, reason: true, occurredAt: true,
+        actor: { select: { loginLabel: true } } }, orderBy: { id: 'desc' }
+    }) : []
     res.json({
-      task, baselines, allocations, workers,
+      task, baselines: baselines.map(({ tasks, dependencies, ...baseline }) => ({ ...baseline,
+        taskSnapshot: tasks[0] || null,
+        predecessorIds: dependencies.map(edge => taskRefById.get(edge.predecessorId) || String(edge.predecessorId))
+      })), allocations, workers, planHistory,
       allocationHistory: allocationHistory.map(row => ({
         ...row, events: allocationEvents.filter(event => event.entityId === row.id)
       })),
@@ -170,7 +202,17 @@ router.patch('/tasks/:taskId', async (req, res, next) => {
       }
       await tx.taskDependency.deleteMany({ where: { successorId: task.id } })
       if (predecessors.length) await tx.taskDependency.createMany({ data: predecessors.map(pred => ({ predecessorId: pred.id, successorId: task.id })) })
-      return tx.task.update({ where: { id: task.id }, data: proposed, include: { predecessors: { include: { predecessor: true } } } })
+      const updated = await tx.task.update({ where: { id: task.id }, data: proposed, include: { predecessors: { include: { predecessor: true } } } })
+      const snapshot = (row, ids) => JSON.stringify({ title: row.title,
+        startDate: row.startDate.toISOString().slice(0, 10), finishDate: row.finishDate.toISOString().slice(0, 10),
+        isMilestone: row.isMilestone, predecessorIds: ids })
+      await tx.provenanceEvent.create({ data: {
+        entityType: 'Task', entityId: task.id, action: 'WORKING_PLAN_REVISED', actorId: Number(req.actor.sub),
+        reason: typeof req.body.reason === 'string' ? req.body.reason.trim() || null : null,
+        fromState: snapshot(task, task.predecessors.map(edge => edge.predecessorId)),
+        toState: snapshot(updated, predecessors.map(row => row.id))
+      } })
+      return updated
     })
     res.json(saved)
   } catch (e) { next(e) }

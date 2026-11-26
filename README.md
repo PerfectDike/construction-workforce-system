@@ -47,6 +47,8 @@ The seed command creates fictional accounts from the shared fixture. Use each ac
 
 The fixture's first baseline provides the initial working task dates. The seed does not create approved baselines or later workflow records, so those need to be created through the application when testing those workflows.
 
+For local account creation and password recovery, configure `TEST_MAIL_DIR` and `RECOVERY_BASE_URL` as shown in `backend/.env.example`. Invitations and reset links are captured as local test mail; the prototype does not send email. New demonstration accounts must use `@example.test` addresses. If the frontend runs on a different port, set `RECOVERY_BASE_URL` to that frontend address. If the API runs on a different port, set `VITE_API_URL` for the frontend to its `/api` address.
+
 ## Tests
 
 Run the backend test suite from the `backend` directory with `npm test`. Independent expected results for the tests are maintained under `backend/test`.

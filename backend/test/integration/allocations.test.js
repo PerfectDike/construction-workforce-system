@@ -30,6 +30,21 @@ dbSuite('allocations with a seeded test database', () => {
     const total = await prisma.allocation.aggregate({ where: { worker: { sharedId: 'W001' }, workDate: new Date('2026-11-04T00:00:00.000Z'), status: 'APPROVED' }, _sum: { allocatedHours: true } })
     expect(Number(total._sum.allocatedHours)).toBe(8)
   })
+  test('simultaneous requests cannot exceed a worker day', async () => {
+    const body = { workerId: 'W001', taskId: 'T104', workDate: '2026-11-09', hours: 5 }
+    const results = await Promise.all([
+      request(app).post('/api/allocations').set('Authorization', `Bearer ${token}`).send(body),
+      request(app).post('/api/allocations').set('Authorization', `Bearer ${token}`).send(body)
+    ])
+    expect(results.map(result => result.status).sort()).toEqual([201, 422])
+    expect(results.find(result => result.status === 422).body.error.code).toBe('OVER_CAPACITY')
+    const saved = await prisma.allocation.findMany({
+      where: { worker: { sharedId: 'W001' }, task: { sharedId: 'T104' },
+        workDate: new Date('2026-11-09T00:00:00.000Z'), status: 'APPROVED' }
+    })
+    expect(saved).toHaveLength(1)
+    expect(Number(saved[0].allocatedHours)).toBe(5)
+  })
   test('shows current availability, skill and date flags for manager planning', async () => {
     const url = '/api/tasks/T102/workforce-options?date=2026-11-04'
     const options = await request(app).get(url).set('Authorization', `Bearer ${token}`)

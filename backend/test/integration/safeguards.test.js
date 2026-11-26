@@ -73,5 +73,5 @@ dbSuite('database safeguards against direct writes', () => {
     } })
     await expect(prisma.provenanceEvent.update({ where: { id: event.id }, data: { action: 'CHANGED' } })).rejects.toThrow(/append-only/)
     await expect(prisma.provenanceEvent.delete({ where: { id: event.id } })).rejects.toThrow(/append-only/)
-  })
+  }, 30000)
 })

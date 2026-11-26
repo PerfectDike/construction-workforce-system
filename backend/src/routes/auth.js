@@ -4,7 +4,7 @@ const { createHash, randomBytes } = require('crypto')
 const { prisma } = require('../db')
 const { captureMail } = require('../services/test-mail')
 const recoveryRequests = new Map()
-const genericRecoveryMessage = 'If the account exists, a reset link has been sent to its demo mailbox.'
+const genericRecoveryMessage = 'If the account exists, password reset instructions have been prepared.'
 const hashToken = token => createHash('sha256').update(token).digest('hex')
 
 async function login(req, res, next) {

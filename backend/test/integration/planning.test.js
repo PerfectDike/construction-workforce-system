@@ -12,6 +12,18 @@ beforeAll(async () => {
   outsider = other.body.token
 })
 afterAll(async () => prisma.$disconnect())
+test('lists only the selected project tasks for a member', async () => {
+  const visible = await request(app).get('/api/projects/P001/tasks').set('Authorization', auth(manager))
+  expect(visible.status).toBe(200)
+  expect(visible.body.tasks).toHaveLength(6)
+  expect(visible.body.tasks.map(row => row.sharedId)).toContain('T102')
+  expect(visible.body.tasks.find(row => row.sharedId === 'T102')).toMatchObject({
+    startDate: '2026-11-04T00:00:00.000Z', finishDate: '2026-11-06T00:00:00.000Z',
+    isMilestone: false, predecessorIds: ['T101']
+  })
+  const denied = await request(app).get('/api/projects/P001/tasks').set('Authorization', auth(outsider))
+  expect(denied.status).toBe(403)
+})
 test('save and reopen T102, reject an invalid predecessor, and preserve an approved baseline', async () => {
   expect(manager).toBeTruthy()
   const loaded = await request(app).get('/api/tasks/T102').set('Authorization', auth(manager))
@@ -24,8 +36,13 @@ test('save and reopen T102, reject an invalid predecessor, and preserve an appro
   expect(invalid.status).toBe(422)
   const saved = await request(app).patch('/api/tasks/T102').set('Authorization', auth(manager)).send({ predecessorIds: ['T101'] })
   expect(saved.status).toBe(200)
+  const history = (await request(app).get('/api/tasks/T102/workflow').set('Authorization', auth(manager))).body.planHistory
+  expect(history[0]).toMatchObject({ action: 'WORKING_PLAN_REVISED', actor: { loginLabel: 'morgan.ellis@example.test' } })
+  expect(JSON.parse(history[0].toState).predecessorIds).toEqual([task.predecessors[0].predecessor.id])
   const baseline = await request(app).post(`/api/projects/${task.projectId}/baselines`).set('Authorization', auth(manager)).send({ reason: 'Initial plan' })
   expect(baseline.status).toBe(201)
+  const comparison = (await request(app).get('/api/tasks/T102/workflow').set('Authorization', auth(manager))).body.baselines[0]
+  expect(comparison).toMatchObject({ versionNo: 1, predecessorIds: ['T101'], taskSnapshot: { title: 'Install drainage' } })
   expect(baseline.body.tasks.find(row => row.taskId === task.id).finishDate.slice(0, 10)).toBe('2026-11-06')
   expect(baseline.body.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ successorId: task.id, predecessorId: task.predecessors[0].predecessor.id })]))
   await expect(prisma.baselineTask.update({ where: { baselineId_taskId: { baselineId: baseline.body.id, taskId: task.id } }, data: { title: 'Changed' } })).rejects.toThrow()
@@ -39,6 +56,7 @@ test('save and reopen T102, reject an invalid predecessor, and preserve an appro
     .send({ startDate: '2026-11-05', predecessorIds: [] })
   expect(conflict.status).toBe(422)
   expect(conflict.body.error.message).toBe(`The proposed dates exclude allocation ${assignment.body.id} for Alex Morgan on 2026-11-04.`)
+  expect(await prisma.provenanceEvent.count({ where: { entityType: 'Task', entityId: task.id, action: 'WORKING_PLAN_REVISED' } })).toBe(1)
   const unchanged = await request(app).get('/api/tasks/T102').set('Authorization', auth(manager))
   expect(unchanged.status).toBe(200)
   expect(unchanged.body.startDate).toBe(task.startDate)

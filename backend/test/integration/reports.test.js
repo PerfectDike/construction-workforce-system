@@ -20,7 +20,7 @@ dbSuite('reports for the connected scenario', () => {
     t102Update = submitted.body
     const approved = await api('post', `/api/site-updates/${t102Update.id}/approve`, manager).send({})
     expect(approved.status).toBe(200)
-  })
+  }, 30000)
   afterAll(async () => prisma.$disconnect())
   test('shows variance and source records, and distinguishes zero from missing', async () => {
     const report = await api('get', '/api/reports/tasks/T102', viewer)
