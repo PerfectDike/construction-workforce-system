@@ -253,12 +253,11 @@ export function ProjectBaselineApproval({ projectId, projectName, token, openOve
       <p>{preview.tasks.length} working activities will be saved. {preview.reason ? `Reason: ${preview.reason}` : 'Initial baseline approval.'}</p>
       <p className="scroll-hint">Swipe across the table to inspect every column.</p>
       <div className="report-table-wrap"><table>
-        <thead><tr><th scope="col" className="sticky-col">Activity</th><th scope="col">Start</th><th scope="col">Finish</th><th scope="col">Type</th><th scope="col">Predecessors</th></tr></thead>
+        <thead><tr><th scope="col" className="sticky-col">Activity</th><th scope="col">Start</th><th scope="col">Finish</th><th scope="col">Predecessors</th></tr></thead>
         <tbody>{preview.tasks.map(row => <tr key={row.id}>
           <th scope="row" className="sticky-col">{row.sharedId || row.taskCode} · <ExpandableText text={row.title} limit={70} /></th>
           <td className="nowrap">{day(row.startDate)}</td>
           <td className="nowrap">{day(row.finishDate)}</td>
-          <td><StatusBadge tone={row.isMilestone ? 'brand' : 'muted'}>{row.isMilestone ? 'Milestone' : 'Activity'}</StatusBadge></td>
           <td><ExpandableText text={row.predecessorIds.join(', ')} fallback="None" /></td>
         </tr>)}</tbody>
       </table></div>

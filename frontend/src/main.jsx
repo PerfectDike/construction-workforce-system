@@ -86,7 +86,6 @@ function ActivityListSection({ section, canManage, projectTasks, tasksLoading, o
           <th scope="row" className="sticky-col nowrap">{task.sharedId || task.taskCode}</th>
           <td data-label="Activity">
             <ExpandableText text={task.title} limit={64} />
-            {task.isMilestone && <> <StatusBadge tone="brand">Milestone</StatusBadge></>}
           </td>
           <td data-label="Working dates" className="nowrap">{day(task.startDate)} to {day(task.finishDate)}</td>
           {section === 'planning' && <td data-label="Predecessors"><ExpandableText text={task.predecessorIds?.join(', ')} fallback="None" /></td>}
@@ -283,17 +282,19 @@ export function App() {
         <PasswordInput label="New password" hint="at least 12 characters" name="newPassword" autoComplete="new-password" minLength="12" required />
       </ActionForm>
       <button type="button" onClick={() => { window.history.replaceState({}, '', window.location.pathname); setResetToken('') }}>Back to sign in</button>
-    </> : !session && recoveryMode && capabilities.mailConfigured ? <>
+    </> : !session && recoveryMode ? <>
       <h2>Recover account</h2>
-      <p>Enter your account email to request a password reset link.</p>
-      <ActionForm button="Request reset link" pendingLabel="Sending link..." onSave={async values => {
-        const result = await call('/auth/recovery/request', {
-          method: 'POST', data: { loginLabel: values.get('email') }
-        })
-        return result.message
-      }}>
-        <label>Account email<input name="email" type="email" autoComplete="username" required /></label>
-      </ActionForm>
+      {capabilities.mailConfigured ? <>
+        <p>Enter your account email to request a password reset link.</p>
+        <ActionForm button="Request reset link" pendingLabel="Sending link..." onSave={async values => {
+          const result = await call('/auth/recovery/request', {
+            method: 'POST', data: { loginLabel: values.get('email') }
+          })
+          return result.message
+        }}>
+          <label>Account email<input name="email" type="email" autoComplete="username" required /></label>
+        </ActionForm>
+      </> : <StatusBanner kind="info" message="Password reset via email is disabled in this environment. Ask an administrator to issue a temporary password in Setup." />}
       <button type="button" onClick={() => setRecoveryMode(false)}>Back to sign in</button>
     </> : !session ? <>
       <h2>Sign in</h2>
@@ -309,9 +310,7 @@ export function App() {
         <label>Email<input name="email" type="email" autoComplete="username" required /></label>
         <PasswordInput label="Password" name="password" autoComplete="current-password" required />
       </ActionForm>
-      {capabilities.mailConfigured
-        ? <button type="button" onClick={() => setRecoveryMode(true)}>Forgot password?</button>
-        : <p className="explanation">Password reset via email is disabled in this environment. Ask an administrator to issue a temporary password in Setup.</p>}
+      <button type="button" onClick={() => setRecoveryMode(true)}>Forgot password?</button>
     </> : <>
       {sessionExpiringSoon && <StatusBanner kind="info"
         message="Your sign-in session expires in under 5 minutes. Save any edits or sign out and back in."

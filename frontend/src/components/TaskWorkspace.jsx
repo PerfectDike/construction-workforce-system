@@ -59,7 +59,6 @@ export function TaskWorkspace({ taskId, tasks = [], onSelectTask, session, secti
             <StatusBadge tone={workflow.task.status === 'WORKING' ? 'ok' : 'muted'}>
               {workflow.task.status === 'WORKING' ? 'Working' : 'Inactive'}
             </StatusBadge>
-            {workflow.task.isMilestone && <> <StatusBadge tone="brand">Milestone</StatusBadge></>}
           </p>
         </div>
         {tasks.length > 0 && (() => {
