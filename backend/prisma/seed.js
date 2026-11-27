@@ -66,7 +66,7 @@ async function main() {
       const workerId = workers[row.workerId].id, workDate = date(row.date)
       await db.workerAvailability.upsert({ where: { workerId_workDate: { workerId, workDate } }, create: { workerId, workDate, availableHours: row.availableHours }, update: {} })
     }
-  })
+  }, { maxWait: 20000, timeout: 60000 })
   for (const model of ['project', 'task', 'worker']) {
     const rows = await prisma[model].findMany({ where: { sharedId: { not: null } }, select: { id: true, sharedId: true }, orderBy: { sharedId: 'asc' } })
     console.log(`${model}s (${rows.length}): ${rows.map(r => `${r.sharedId}=${r.id}`).join(', ')}`)

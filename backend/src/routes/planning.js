@@ -42,13 +42,19 @@ router.get('/projects/:projectId/tasks', async (req, res, next) => {
     const tasks = await prisma.task.findMany({
       where: { projectId: project.id },
       select: { id: true, sharedId: true, taskCode: true, title: true, status: true,
-        startDate: true, finishDate: true, isMilestone: true, skills: { select: { skillId: true } },
+        startDate: true, finishDate: true, isMilestone: true,
+        skills: { select: { skillId: true, skill: { select: { name: true } } } },
+        allocations: { where: { status: 'APPROVED' }, select: { id: true } },
+        updates: { where: { status: 'SUBMITTED' }, select: { id: true } },
         predecessors: { select: { predecessor: { select: { id: true, sharedId: true, taskCode: true } } } }
       },
       orderBy: { taskCode: 'asc' }
     })
-    res.json({ tasks: tasks.map(({ predecessors, skills, ...task }) => ({ ...task,
+    res.json({ tasks: tasks.map(({ predecessors, skills, allocations, updates, ...task }) => ({ ...task,
       skillIds: skills.map(row => row.skillId),
+      skillNames: skills.map(row => row.skill.name),
+      approvedAllocationCount: allocations.length,
+      pendingUpdateCount: updates.length,
       predecessorIds: predecessors.map(({ predecessor }) => predecessor.sharedId || predecessor.taskCode || String(predecessor.id))
     })) })
   } catch (error) { next(error) }
@@ -90,7 +96,7 @@ router.get('/tasks/:taskId/workflow', async (req, res, next) => {
       where: lookup(req.params.taskId),
       select: {
         id: true, sharedId: true, taskCode: true, title: true, startDate: true, finishDate: true, status: true,
-        isMilestone: true, projectId: true, skills: { select: { skillId: true } },
+        isMilestone: true, projectId: true, skills: { select: { skillId: true, skill: { select: { name: true } } } },
         project: { select: { id: true, name: true, sharedId: true } },
         predecessors: { select: { predecessor: { select: { id: true, sharedId: true } } } }
       }
@@ -117,7 +123,11 @@ router.get('/tasks/:taskId/workflow', async (req, res, next) => {
       }),
       manage ? prisma.worker.findMany({
         where: { sharedId: { not: null } },
-        select: { sharedId: true, label: true },
+        select: {
+          sharedId: true, label: true, dailyCapacityHours: true,
+          skills: { select: { skill: { select: { name: true } } } },
+          availability: { select: { workDate: true, availableHours: true }, orderBy: { workDate: 'asc' } }
+        },
         orderBy: { sharedId: 'asc' }
       }) : [],
       manage || submitHours ? prisma.siteUpdate.findMany({
@@ -160,10 +170,16 @@ router.get('/tasks/:taskId/workflow', async (req, res, next) => {
         actor: { select: { loginLabel: true } } }, orderBy: { id: 'desc' }
     }) : []
     res.json({
-      task, baselines: baselines.map(({ tasks, dependencies, ...baseline }) => ({ ...baseline,
+      task: { ...task, skillNames: task.skills.map(row => row.skill.name) },
+      baselines: baselines.map(({ tasks, dependencies, ...baseline }) => ({ ...baseline,
         taskSnapshot: tasks[0] || null,
         predecessorIds: dependencies.map(edge => taskRefById.get(edge.predecessorId) || String(edge.predecessorId))
-      })), allocations, workers, planHistory,
+      })), allocations,
+      workers: workers.map(row => ({
+        sharedId: row.sharedId, label: row.label, dailyCapacityHours: Number(row.dailyCapacityHours),
+        skills: row.skills.map(item => item.skill.name),
+        availability: row.availability.map(day => ({ workDate: day.workDate, availableHours: Number(day.availableHours) }))
+      })), planHistory,
       allocationHistory: allocationHistory.map(row => ({
         ...row, events: allocationEvents.filter(event => event.entityId === row.id)
       })),

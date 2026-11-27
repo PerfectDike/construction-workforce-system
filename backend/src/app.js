@@ -26,5 +26,6 @@ app.use((error, _req, res, _next) => {
   const status = error.status ?? (known ? 422 : 500)
   res.status(status).json({ error: { code: error.code || (known || status === 422 ? 'VALIDATION_ERROR' : status === 403 ? 'FORBIDDEN' : 'INTERNAL_ERROR'), message: error.message } })
 })
-module.exports = { app }
+app.app = app
+module.exports = app
 
