@@ -1,4 +1,6 @@
 const express = require('express')
+const bcrypt = require('bcryptjs')
+const { randomBytes } = require('crypto')
 const { prisma } = require('../db')
 const { requireAuth } = require('../middleware/auth')
 const { requireProject } = require('../middleware/project-access')
@@ -36,8 +38,63 @@ async function checkSkills(tx, ids) {
 router.get('/setup/accounts', async (req, res, next) => {
   try {
     await admin(req.actor)
-    const accounts = await prisma.user.findMany({ where: { accountStatus: 'ACTIVE', role: { name: { not: 'ADMIN' } } }, select: { id: true, loginLabel: true, sharedId: true }, orderBy: { loginLabel: 'asc' } })
-    res.json({ accounts })
+    const accounts = await prisma.user.findMany({
+      where: { accountStatus: 'ACTIVE', role: { name: { not: 'ADMIN' } } },
+      select: { id: true, loginLabel: true, sharedId: true, role: { select: { name: true } } },
+      orderBy: { loginLabel: 'asc' }
+    })
+    res.json({ accounts: accounts.map(({ role, ...row }) => ({ ...row, roleName: role.name })) })
+  } catch (e) { next(e) }
+})
+
+router.post('/setup/accounts', async (req, res, next) => {
+  try {
+    const actor = await admin(req.actor)
+    const loginLabel = typeof req.body.loginLabel === 'string' ? req.body.loginLabel.trim().toLowerCase() : ''
+    const roleName = req.body.roleName
+    if (!/^[a-z0-9._%+-]+@example\.test$/.test(loginLabel) ||
+        !['PROJECT_MANAGER', 'SITE_OFFICER', 'VIEWER'].includes(roleName)) {
+      fail('Enter an @example.test email address and choose a role')
+    }
+    const existing = await prisma.user.findUnique({ where: { loginLabel } })
+    if (existing) fail('Account already exists', 409)
+    const role = await prisma.role.findUniqueOrThrow({ where: { name: roleName } })
+    const temporaryPassword = `${randomBytes(12).toString('base64url')}A1!`
+    const passwordHash = await bcrypt.hash(temporaryPassword, 10)
+    const projectRef = typeof req.body.projectId === 'string' && req.body.projectId.trim() ? req.body.projectId.trim() : null
+    const project = projectRef ? await prisma.project.findUnique({ where: reference(projectRef) }) : null
+    if (projectRef && !project) fail('Project not found', 404)
+    const created = await prisma.$transaction(async tx => {
+      const user = await tx.user.create({ data: { loginLabel, passwordHash, roleId: role.id } })
+      if (project) {
+        await tx.projectMembership.create({ data: { userId: user.id, projectId: project.id, roleName } })
+      }
+      await tx.provenanceEvent.create({ data: {
+        entityType: 'User', entityId: user.id, action: 'ACCOUNT_CREATED', actorId: actor.id,
+        reason: project ? `${project.sharedId || project.id}:${roleName}` : roleName
+      } })
+      return user
+    })
+    res.status(201).json({ id: created.id, loginLabel, roleName, temporaryPassword })
+  } catch (e) { next(e) }
+})
+
+router.post('/setup/accounts/:userId/reset-password', async (req, res, next) => {
+  try {
+    const actor = await admin(req.actor)
+    const userId = Number(req.params.userId)
+    const target = Number.isInteger(userId) ? await prisma.user.findUnique({ where: { id: userId }, include: { role: true } }) : null
+    if (!target) fail('Account not found', 404)
+    if (target.accountStatus !== 'ACTIVE' || target.role.name === 'ADMIN') fail('Choose an active project account')
+    const temporaryPassword = `${randomBytes(12).toString('base64url')}A1!`
+    const passwordHash = await bcrypt.hash(temporaryPassword, 10)
+    await prisma.$transaction(async tx => {
+      await tx.user.update({ where: { id: target.id }, data: { passwordHash } })
+      await tx.provenanceEvent.create({ data: {
+        entityType: 'User', entityId: target.id, action: 'ADMIN_PASSWORD_RESET', actorId: actor.id
+      } })
+    })
+    res.json({ id: target.id, loginLabel: target.loginLabel, temporaryPassword })
   } catch (e) { next(e) }
 })
 
@@ -74,9 +131,10 @@ router.get('/projects/:projectId/pending-updates', async (req, res, next) => {
     if (!project) fail('Project not found', 404)
     await requireProject(req.actor, project.id, ['PROJECT_MANAGER'])
     const updates = await prisma.siteUpdate.findMany({ where: { task: { projectId: project.id }, status: 'SUBMITTED' },
-      select: { id: true, workDate: true, recordedHours: true, task: { select: { sharedId: true, title: true } }, author: { select: { loginLabel: true } } }, orderBy: { id: 'asc' } })
+      select: { id: true, workDate: true, recordedHours: true, progressPercent: true, task: { select: { sharedId: true, title: true } }, author: { select: { loginLabel: true } } }, orderBy: { id: 'asc' } })
     res.json({ updates: updates.map(row => ({ id: row.id, taskId: row.task.sharedId, title: row.task.title,
-      workDate: row.workDate, recordedHours: row.recordedHours === null ? null : Number(row.recordedHours), author: row.author.loginLabel })) })
+      workDate: row.workDate, recordedHours: row.recordedHours === null ? null : Number(row.recordedHours),
+      progressPercent: row.progressPercent, author: row.author.loginLabel })) })
   } catch (e) { next(e) }
 })
 

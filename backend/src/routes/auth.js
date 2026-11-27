@@ -9,11 +9,17 @@ const hashToken = token => createHash('sha256').update(token).digest('hex')
 
 async function login(req, res, next) {
   try {
-    const { loginLabel, password } = req.body
-    const user = await prisma.user.findUnique({ where: { loginLabel }, include: { role: true } })
-    if (!user || user.accountStatus !== 'ACTIVE' || typeof password !== 'string' ||
-        !(await bcrypt.compare(password, user.passwordHash))) {
+    const loginLabel = typeof req.body?.loginLabel === 'string' ? req.body.loginLabel.trim().toLowerCase() : ''
+    const password = req.body?.password
+    if (!loginLabel || typeof password !== 'string') {
       return res.status(401).json({ error: { code: 'INVALID_CREDENTIALS', message: 'Invalid sign-in details' } })
+    }
+    const user = await prisma.user.findUnique({ where: { loginLabel }, include: { role: true } })
+    if (!user || user.accountStatus !== 'ACTIVE' || !(await bcrypt.compare(password, user.passwordHash))) {
+      return res.status(401).json({ error: { code: 'INVALID_CREDENTIALS', message: 'Invalid sign-in details' } })
+    }
+    if (!process.env.JWT_SECRET) {
+      throw new Error('Authentication secret is not configured')
     }
     const token = jwt.sign({ sub: user.id, role: user.role.name }, process.env.JWT_SECRET, { expiresIn: '1h' })
     return res.json({ token, user: { id: user.id, loginLabel: user.loginLabel, role: user.role.name } })

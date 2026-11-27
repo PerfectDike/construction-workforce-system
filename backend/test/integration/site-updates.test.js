@@ -100,8 +100,20 @@ dbSuite('site-update approval with the connected allocation', () => {
     const projectReport = await api('get', '/api/reports/projects/P001?asOf=2026-11-12&from=2026-11-01&to=2026-11-12', viewer)
     expect(projectReport.status).toBe(200)
     const t102 = projectReport.body.tasks.find(row => row.taskId === 'T102')
-    expect(t102).toMatchObject({ status: 'unfinished', overdue: true, recordedHours: 2 })
+    expect(t102).toMatchObject({ status: 'unfinished', overdue: true, recordedHours: 2, progressPercent: 45 })
     expect(projectReport.body.totals).toMatchObject({ finished: 0, unfinished: 1, overdue: 1 })
+
+    const blockedEdit = await api('patch', `/api/allocations/${allocation.id}`, manager).send({
+      workerId: 'W001', workDate: '2026-11-04', hours: 5, reason: 'Try changing while update exists'
+    })
+    expect(blockedEdit.status).toBe(409)
+    expect(blockedEdit.body.error.code).toBe('ALLOCATION_HAS_UPDATES')
+
+    const blockedCancel = await api('post', `/api/allocations/${allocation.id}/cancel`, manager).send({
+      reason: 'Try cancelling while update exists'
+    })
+    expect(blockedCancel.status).toBe(409)
+    expect(blockedCancel.body.error.code).toBe('ALLOCATION_HAS_UPDATES')
   })
 })
 

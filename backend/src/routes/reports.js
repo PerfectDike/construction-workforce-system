@@ -30,14 +30,17 @@ router.get('/reports/tasks/:taskId', async (req, res, next) => {
     const allocations = await prisma.allocation.findMany({ where: { taskId: task.id, status: 'APPROVED' }, orderBy: { id: 'asc' } })
     const updates = await prisma.siteUpdate.findMany({ where: { taskId: task.id, status: 'APPROVED', isCurrent: true }, orderBy: [{ workDate: 'asc' }, { id: 'asc' }] })
     const finished = updates.filter(row => row.actualFinishDate).at(-1)
+    const latestProgress = updates.filter(row => row.progressPercent !== null).at(-1)
+    const progressPercent = finished ? (finished.progressPercent ?? 100) : (latestProgress?.progressPercent ?? null)
     const recorded = updates.filter(row => row.recordedHours !== null)
     res.json({ taskId: task.sharedId || String(task.id), baselineId: baseline.id, baselineVersion: baseline.versionNo,
       baselineFinish: planned?.finishDate ?? null, actualFinish: finished?.actualFinishDate ?? null,
       finishVarianceDays: planned && finished ? varianceInDays(finished.actualFinishDate, planned.finishDate) : null,
+      progressPercent,
       plannedHours: allocations.reduce((n, a) => n + Number(a.allocatedHours), 0),
       recordedHours: recorded.length ? recorded.reduce((n, u) => n + Number(u.recordedHours), 0) : null,
       hoursStatus: recorded.length ? 'reported' : 'not_reported',
-      sources: { baselineId: baseline.id, taskId: task.id, allocationIds: allocations.map(a => a.id), updateIds: updates.map(u => u.id), baselineTask: planned || null, allocations, updates: updates.map(({ id, workDate, recordedHours, actualFinishDate, allocationId }) => ({ id, workDate, recordedHours, actualFinishDate, allocationId })) } })
+      sources: { baselineId: baseline.id, taskId: task.id, allocationIds: allocations.map(a => a.id), updateIds: updates.map(u => u.id), baselineTask: planned || null, allocations, updates: updates.map(({ id, workDate, recordedHours, progressPercent: pct, actualFinishDate, allocationId }) => ({ id, workDate, recordedHours, progressPercent: pct, actualFinishDate, allocationId })) } })
   } catch (e) { next(e) }
 })
 router.get('/reports/projects/:projectId', async (req, res, next) => {
@@ -85,12 +88,14 @@ router.get('/reports/projects/:projectId', async (req, res, next) => {
       const periodUpdates = taskUpdates.filter(row => row.workDate >= from && row.workDate <= to && row.recordedHours !== null)
       const taskAllocations = allocations.filter(row => row.taskId === task.id)
       const finished = taskUpdates.filter(row => row.actualFinishDate).at(-1)
+      const latestProgress = taskUpdates.filter(row => row.progressPercent !== null).at(-1)
+      const progressPercent = finished ? (finished.progressPercent ?? 100) : (latestProgress?.progressPercent ?? null)
       const hasStatus = taskUpdates.some(row => row.progressPercent !== null)
       const status = finished ? 'finished' : hasStatus ? 'unfinished' : 'not_reported'
       return {
         taskId: task.sharedId || String(task.id), taskCode: task.taskCode,
         title: planned?.title || task.title, baselineStatus: planned ? 'included' : 'new',
-        taskStatus: task.status, status,
+        taskStatus: task.status, status, progressPercent,
         overdue: status === 'unfinished' && !!planned && planned.finishDate < reportDate,
         baselineFinish: planned?.finishDate || null,
         actualFinish: finished?.actualFinishDate || null,

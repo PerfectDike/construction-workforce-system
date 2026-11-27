@@ -78,6 +78,12 @@ router.post('/site-updates/:id/approve', async (req, res, next) => {
       await tx.$queryRaw`SELECT id FROM "SiteUpdate" WHERE id = ${id} FOR UPDATE`
       const current = await tx.siteUpdate.findUnique({ where: { id } })
       if (current.status !== 'SUBMITTED') throw fail(409, 'INVALID_STATE', 'Update is not awaiting approval')
+      if (current.allocationId) {
+        const allocation = await tx.allocation.findUnique({ where: { id: current.allocationId } })
+        if (!allocation || allocation.status !== 'APPROVED') {
+          throw fail(409, 'INVALID_ALLOCATION', 'Allocation is no longer approved')
+        }
+      }
       if (current.supersedesId) {
         const changed = await tx.siteUpdate.updateMany({ where: { id: current.supersedesId, status: 'APPROVED', isCurrent: true }, data: { status: 'SUPERSEDED', isCurrent: false } })
         if (changed.count !== 1) throw fail(409, 'STALE_CORRECTION', 'The original entry is no longer current')

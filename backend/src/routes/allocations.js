@@ -190,6 +190,13 @@ router.patch('/allocations/:id', async (req, res, next) => {
       await tx.$queryRaw`SELECT id FROM "Allocation" WHERE id = ${id} FOR UPDATE`
       const current = await tx.allocation.findUniqueOrThrow({ where: { id } })
       if (current.status !== 'APPROVED') throw fail(409, 'ALLOCATION_CHANGED', 'This allocation was already changed')
+      const activeUpdate = await tx.siteUpdate.findFirst({
+        where: { allocationId: id, OR: [{ status: 'SUBMITTED' }, { status: 'APPROVED', isCurrent: true }] },
+        select: { id: true }
+      })
+      if (activeUpdate) {
+        throw fail(409, 'ALLOCATION_HAS_UPDATES', 'Reject or withdraw linked site updates before changing this allocation')
+      }
       await lockWorkers(tx, [current.workerId, worker.id])
       await check(tx, { worker, task: original.task, ...values, excludeId: id })
       await tx.allocation.update({ where: { id }, data: { status: 'SUPERSEDED' } })
@@ -220,6 +227,13 @@ router.post('/allocations/:id/cancel', async (req, res, next) => {
       await tx.$queryRaw`SELECT id FROM "Allocation" WHERE id = ${id} FOR UPDATE`
       const current = await tx.allocation.findUniqueOrThrow({ where: { id } })
       if (current.status !== 'APPROVED') throw fail(409, 'ALLOCATION_CHANGED', 'This allocation was already changed')
+      const activeUpdate = await tx.siteUpdate.findFirst({
+        where: { allocationId: id, OR: [{ status: 'SUBMITTED' }, { status: 'APPROVED', isCurrent: true }] },
+        select: { id: true }
+      })
+      if (activeUpdate) {
+        throw fail(409, 'ALLOCATION_HAS_UPDATES', 'Reject or withdraw linked site updates before cancelling this allocation')
+      }
       await lockWorkers(tx, [current.workerId])
       const saved = await tx.allocation.update({ where: { id }, data: { status: 'CANCELLED', reason } })
       await tx.provenanceEvent.create({ data: {

@@ -69,4 +69,27 @@ dbSuite('project and worker setup', () => {
     const after = await api('get', '/api/tasks/T301/workforce-options?date=2026-10-02', managerToken)
     expect(after.body.workers.find(row => row.workerId === 'W005').flags).toContain('SKILL_MISMATCH')
   })
+
+  test('admin provisions an account with one-time password, normalizes login, and resets password', async () => {
+    const payload = { loginLabel: 'officer.two@example.test', roleName: 'SITE_OFFICER', projectId: 'P003' }
+    expect((await api('post', '/api/setup/accounts', managerToken).send(payload)).status).toBe(403)
+    const created = await api('post', '/api/setup/accounts', adminToken).send(payload)
+    expect(created.status).toBe(201)
+    expect(typeof created.body.temporaryPassword).toBe('string')
+    const mixedCaseLogin = await request(app).post('/api/auth/login').send({
+      loginLabel: '  Officer.Two@Example.Test ',
+      password: created.body.temporaryPassword
+    })
+    expect(mixedCaseLogin.status).toBe(200)
+    expect((await api('get', '/api/tasks/T301/workflow', mixedCaseLogin.body.token)).body.permissions.submitHours).toBe(true)
+
+    const rotated = await api('post', `/api/setup/accounts/${created.body.id}/reset-password`, adminToken).send({})
+    expect(rotated.status).toBe(200)
+    expect((await request(app).post('/api/auth/login').send({
+      loginLabel: 'officer.two@example.test', password: created.body.temporaryPassword
+    })).status).toBe(401)
+    expect((await request(app).post('/api/auth/login').send({
+      loginLabel: 'officer.two@example.test', password: rotated.body.temporaryPassword
+    })).status).toBe(200)
+  })
 })

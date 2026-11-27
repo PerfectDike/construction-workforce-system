@@ -140,7 +140,7 @@ router.get('/tasks/:taskId/workflow', async (req, res, next) => {
         },
         select: {
           id: true, allocationId: true, status: true, workDate: true, recordedHours: true,
-          actualFinishDate: true, note: true, supersedesId: true, authorId: true,
+          progressPercent: true, actualFinishDate: true, note: true, supersedesId: true, authorId: true,
           decisionReason: true, isCurrent: true
         },
         orderBy: { id: 'asc' }
@@ -288,6 +288,29 @@ router.post('/tasks/:taskId/inactivate', async (req, res, next) => {
       await tx.provenanceEvent.create({ data: {
         entityType: 'Task', entityId: task.id, action: 'INACTIVATED',
         fromState: 'WORKING', toState: 'INACTIVE', actorId: Number(req.actor.sub), reason
+      } })
+      return result
+    })
+    res.json(saved)
+  } catch (error) { next(error) }
+})
+
+router.post('/tasks/:taskId/reactivate', async (req, res, next) => {
+  try {
+    const task = await prisma.task.findUnique({ where: lookup(req.params.taskId) })
+    if (!task) return res.status(404).json({ error: { code: 'TASK_NOT_FOUND', message: 'Task not found' } })
+    await requireProject(req.actor, task.projectId, ['PROJECT_MANAGER'])
+    const reason = typeof req.body.reason === 'string' ? req.body.reason.trim() : ''
+    if (!reason) throw bad('Give a reason for reactivating the task')
+    const saved = await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM "Task" WHERE id = ${task.id} FOR UPDATE`
+      const current = await tx.task.findUniqueOrThrow({ where: { id: task.id }, include: { predecessors: true } })
+      if (current.status === 'WORKING') throw Object.assign(new Error('Task is already working'), { status: 409, code: 'TASK_WORKING' })
+      await validateDependencies(tx, current.projectId, current.id, current.predecessors.map(edge => edge.predecessorId), current)
+      const result = await tx.task.update({ where: { id: task.id }, data: { status: 'WORKING' } })
+      await tx.provenanceEvent.create({ data: {
+        entityType: 'Task', entityId: task.id, action: 'REACTIVATED',
+        fromState: 'INACTIVE', toState: 'WORKING', actorId: Number(req.actor.sub), reason
       } })
       return result
     })
