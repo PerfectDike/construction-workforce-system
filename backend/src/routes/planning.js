@@ -220,7 +220,9 @@ router.patch('/tasks/:taskId', async (req, res, next) => {
 
 router.post('/projects/:projectId/tasks', async (req, res, next) => {
   try {
-    const projectId = Number(req.params.projectId)
+    const project = await prisma.project.findUnique({ where: lookup(req.params.projectId) })
+    if (!project) return res.status(404).json({ error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found' } })
+    const projectId = project.id
     await requireProject(req.actor, projectId, ['PROJECT_MANAGER'])
     const { taskCode, title, description, startDate, finishDate, isMilestone = false, predecessorIds = [] } = req.body
     if (typeof taskCode !== 'string' || !/^T\d{3,}$/.test(taskCode) ||
@@ -265,7 +267,9 @@ router.post('/tasks/:taskId/inactivate', async (req, res, next) => {
 
 router.post('/projects/:projectId/baselines', async (req, res, next) => {
   try {
-    const projectId = Number(req.params.projectId)
+    const project = await prisma.project.findUnique({ where: lookup(req.params.projectId) })
+    if (!project) return res.status(404).json({ error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found' } })
+    const projectId = project.id
     await requireProject(req.actor, projectId, ['PROJECT_MANAGER'])
     const baseline = await prisma.$transaction(async tx => {
       await tx.$queryRaw`SELECT id FROM "Project" WHERE id = ${projectId} FOR UPDATE`

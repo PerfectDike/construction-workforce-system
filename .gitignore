@@ -11,6 +11,7 @@ coverage/
 backend/.env
 backend/.test-mail/
 .playwright-cli/
+.vercel/
 backend/.agents/
 backend/.claude/
 backend/.cursor/
@@ -23,3 +24,6 @@ backend/.devin/
 
 # Local verification notes
 /FOUNDATION-CHECK.md
+
+# Local IDE and OS files
+docs/

@@ -39,7 +39,7 @@ test('save and reopen T102, reject an invalid predecessor, and preserve an appro
   const history = (await request(app).get('/api/tasks/T102/workflow').set('Authorization', auth(manager))).body.planHistory
   expect(history[0]).toMatchObject({ action: 'WORKING_PLAN_REVISED', actor: { loginLabel: 'morgan.ellis@example.test' } })
   expect(JSON.parse(history[0].toState).predecessorIds).toEqual([task.predecessors[0].predecessor.id])
-  const baseline = await request(app).post(`/api/projects/${task.projectId}/baselines`).set('Authorization', auth(manager)).send({ reason: 'Initial plan' })
+  const baseline = await request(app).post('/api/projects/P001/baselines').set('Authorization', auth(manager)).send({ reason: 'Initial plan' })
   expect(baseline.status).toBe(201)
   const comparison = (await request(app).get('/api/tasks/T102/workflow').set('Authorization', auth(manager))).body.baselines[0]
   expect(comparison).toMatchObject({ versionNo: 1, predecessorIds: ['T101'], taskSnapshot: { title: 'Install drainage' } })
@@ -84,7 +84,7 @@ test('save and reopen T102, reject an invalid predecessor, and preserve an appro
 })
 
 test('creates a dated task, rejects affected successor changes and keeps inactive task history', async () => {
-  const send = body => request(app).post(`/api/projects/${task.projectId}/tasks`)
+  const send = body => request(app).post('/api/projects/P001/tasks')
     .set('Authorization', auth(manager)).send(body)
   const proposal = { taskCode: 'T107', title: 'Check drainage outlet',
     startDate: '2026-11-04', finishDate: '2026-11-04', predecessorIds: [] }

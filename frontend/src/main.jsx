@@ -2,7 +2,7 @@ import React, { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
 
-const api = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api'
+const api = import.meta.env.VITE_API_URL ?? '/api'
 export const day = value => value?.slice(0, 10) ?? ''
 
 async function call(path, { token, method = 'GET', data, signal } = {}) {
