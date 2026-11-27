@@ -84,5 +84,24 @@ dbSuite('site-update approval with the connected allocation', () => {
       actorId: event.actorId, action: event.action, reason: event.reason, occurredAt: event.occurredAt
     })
   })
+  test('validates progressPercent and reports unfinished/overdue tasks accurately', async () => {
+    for (const badPct of [-1, 101, 12.5]) {
+      expect((await api('post', '/api/site-updates', officer).send({
+        allocationId: allocation.id, workDate: '2026-11-04', recordedHours: 2, progressPercent: badPct
+      })).status).toBe(422)
+    }
+    const inProgress = await api('post', '/api/site-updates', officer).send({
+      allocationId: allocation.id, workDate: '2026-11-04', recordedHours: 2, progressPercent: 45
+    })
+    expect(inProgress.status).toBe(201)
+    expect(inProgress.body.progressPercent).toBe(45)
+    expect((await api('post', `/api/site-updates/${inProgress.body.id}/approve`, manager).send({})).status).toBe(200)
+
+    const projectReport = await api('get', '/api/reports/projects/P001?asOf=2026-11-12&from=2026-11-01&to=2026-11-12', viewer)
+    expect(projectReport.status).toBe(200)
+    const t102 = projectReport.body.tasks.find(row => row.taskId === 'T102')
+    expect(t102).toMatchObject({ status: 'unfinished', overdue: true, recordedHours: 2 })
+    expect(projectReport.body.totals).toMatchObject({ finished: 0, unfinished: 1, overdue: 1 })
+  })
 })
 

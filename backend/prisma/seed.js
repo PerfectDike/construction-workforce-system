@@ -1,4 +1,4 @@
-﻿require('dotenv').config()
+require('dotenv').config()
 const bcrypt = require('bcryptjs')
 const { PrismaClient } = require('@prisma/client')
 const { PrismaPg } = require('@prisma/adapter-pg')
@@ -24,6 +24,12 @@ async function main() {
       users[row.userId] = await db.user.upsert({ where: { sharedId: row.userId },
         create: { sharedId: row.userId, loginLabel: row.email, passwordHash: hash, roleId: role.id }, update: {} })
     }
+    const adminRole = await db.role.findUniqueOrThrow({ where: { name: 'ADMIN' } })
+    await db.user.upsert({
+      where: { loginLabel: 'alex.admin@example.test' },
+      create: { loginLabel: 'alex.admin@example.test', passwordHash: hash, roleId: adminRole.id },
+      update: {}
+    })
     for (const row of fixture.memberships) {
       const userId = users[row.userId].id, projectId = projects[row.projectId].id
       await db.projectMembership.upsert({ where: { userId_projectId: { userId, projectId } },

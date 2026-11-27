@@ -6,6 +6,7 @@ const { toDate, varianceInDays } = require('../services/planning')
 const router = express.Router()
 router.use(requireAuth)
 const fail = (status, code, message) => Object.assign(new Error(message), { status, code })
+const lookup = value => /^\d+$/.test(value) ? { id: Number(value) } : { sharedId: value }
 function calendarDate(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw fail(422, 'INVALID_DATE', 'Enter a valid calendar date')
   let date
@@ -15,7 +16,7 @@ function calendarDate(value) {
 }
 router.get('/reports/tasks/:taskId', async (req, res, next) => {
   try {
-    const task = await prisma.task.findUnique({ where: { sharedId: req.params.taskId } })
+    const task = await prisma.task.findUnique({ where: lookup(req.params.taskId) })
     if (!task) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Task not found' } })
     await requireProject(req.actor, task.projectId)
     let baseline
@@ -30,7 +31,7 @@ router.get('/reports/tasks/:taskId', async (req, res, next) => {
     const updates = await prisma.siteUpdate.findMany({ where: { taskId: task.id, status: 'APPROVED', isCurrent: true }, orderBy: [{ workDate: 'asc' }, { id: 'asc' }] })
     const finished = updates.filter(row => row.actualFinishDate).at(-1)
     const recorded = updates.filter(row => row.recordedHours !== null)
-    res.json({ taskId: task.sharedId, baselineId: baseline.id, baselineVersion: baseline.versionNo,
+    res.json({ taskId: task.sharedId || String(task.id), baselineId: baseline.id, baselineVersion: baseline.versionNo,
       baselineFinish: planned?.finishDate ?? null, actualFinish: finished?.actualFinishDate ?? null,
       finishVarianceDays: planned && finished ? varianceInDays(finished.actualFinishDate, planned.finishDate) : null,
       plannedHours: allocations.reduce((n, a) => n + Number(a.allocatedHours), 0),
@@ -115,7 +116,9 @@ router.get('/reports/projects/:projectId', async (req, res, next) => {
       baseline: { id: baseline.id, versionNo: baseline.versionNo, approvedAt: baseline.approvedAt },
       tasks: rows,
       totals: {
-        taskCount: rows.length, unfinished: rows.filter(row => row.status === 'unfinished').length,
+        taskCount: rows.length,
+        finished: rows.filter(row => row.status === 'finished').length,
+        unfinished: rows.filter(row => row.status === 'unfinished').length,
         overdue: rows.filter(row => row.overdue).length,
         plannedHours: rows.reduce((sum, row) => sum + row.plannedHours, 0),
         recordedHours: reported.length ? reported.reduce((sum, row) => sum + row.recordedHours, 0) : null,

@@ -51,7 +51,7 @@ dbSuite('reports for the connected scenario', () => {
 
     const report = await api('get', '/api/reports/projects/P001?asOf=2026-11-12&from=2026-11-01&to=2026-11-12', viewer)
     expect(report.status).toBe(200)
-    expect(report.body.totals).toMatchObject({ taskCount: 6, plannedHours: 11, recordedHours: 3, reportedTaskCount: 2 })
+    expect(report.body.totals).toMatchObject({ taskCount: 6, finished: 1, plannedHours: 11, recordedHours: 3, reportedTaskCount: 2 })
     const finished = report.body.tasks.find(row => row.taskId === 'T102')
     expect(finished).toMatchObject({ status: 'finished', finishVarianceDays: 3, plannedHours: 6, recordedHours: 3, hoursStatus: 'reported' })
     expect(finished.sources.allocations.map(row => row.id)).toEqual([t102Allocation.id])

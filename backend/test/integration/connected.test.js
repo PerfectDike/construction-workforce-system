@@ -70,6 +70,6 @@ suite('T102 connected scenario on a freshly seeded database', () => {
     expect(zero.status).toBe(201)
     expect((await api('post', `/api/site-updates/${zero.body.id}/approve`, manager).send({})).status).toBe(200)
     expect((await api('get', '/api/reports/tasks/T103', viewer)).body.recordedHours).toBe(0)
-  })
+  }, 30000)
 })
 

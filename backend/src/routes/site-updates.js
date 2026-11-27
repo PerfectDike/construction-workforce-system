@@ -7,10 +7,11 @@ const { toDate } = require('../services/planning')
 const router = express.Router()
 router.use(requireAuth)
 const fail = (status, code, message) => Object.assign(new Error(message), { status, code })
+const lookup = value => /^\d+$/.test(value) ? { id: Number(value) } : { sharedId: value }
 
 router.post('/site-updates', async (req, res, next) => {
   try {
-    const { allocationId, recordedHours, workDate, actualFinishDate, note, supersedesId } = req.body
+    const { allocationId, recordedHours, workDate, actualFinishDate, note, supersedesId, progressPercent } = req.body
     if (!Number.isInteger(allocationId) || typeof recordedHours !== 'number' || !Number.isFinite(recordedHours) || recordedHours < 0 || !Number.isInteger(recordedHours * 100) || !/^\d{4}-\d{2}-\d{2}$/.test(workDate || '')) throw fail(422, 'INVALID_UPDATE', 'A valid allocation, work date and non-negative hours are required')
     const day = toDate(workDate)
     if (day.toISOString().slice(0, 10) !== workDate) throw fail(422, 'INVALID_DATE', 'Enter a valid work date')
@@ -27,6 +28,15 @@ router.post('/site-updates', async (req, res, next) => {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(actualFinishDate)) throw fail(422, 'INVALID_DATE', 'Enter a valid finish date')
       finish = toDate(actualFinishDate)
       if (finish.toISOString().slice(0, 10) !== actualFinishDate) throw fail(422, 'INVALID_DATE', 'Enter a valid finish date')
+    }
+    let pct = null
+    if (progressPercent !== undefined && progressPercent !== null && progressPercent !== '') {
+      if (!Number.isInteger(progressPercent) || progressPercent < 0 || progressPercent > 100) {
+        throw fail(422, 'INVALID_UPDATE', 'Progress percentage must be a whole number from 0 to 100')
+      }
+      pct = progressPercent
+    } else if (finish) {
+      pct = 100
     }
     const row = await prisma.$transaction(async tx => {
       await tx.$queryRaw`SELECT id FROM "Allocation" WHERE id = ${allocationId} FOR NO KEY UPDATE`
@@ -51,7 +61,7 @@ router.post('/site-updates', async (req, res, next) => {
       return tx.siteUpdate.create({ data: {
         entryKey: previous?.entryKey || randomUUID(), taskId: allocation.taskId,
         allocationId, authorId: Number(req.actor.sub), workDate: day,
-        recordedHours, actualFinishDate: finish, note, supersedesId: previous?.id, status: 'SUBMITTED'
+        recordedHours, progressPercent: pct, actualFinishDate: finish, note, supersedesId: previous?.id, status: 'SUBMITTED'
       } })
     })
     res.status(201).json(row)
@@ -131,7 +141,7 @@ router.post('/site-updates/:id/withdraw', async (req, res, next) => {
 })
 router.get('/tasks/:taskId/site-updates', async (req, res, next) => {
   try {
-    const task = await prisma.task.findUnique({ where: { sharedId: req.params.taskId } })
+    const task = await prisma.task.findUnique({ where: lookup(req.params.taskId) })
     if (!task) throw fail(404, 'NOT_FOUND', 'Task not found')
     await requireProject(req.actor, task.projectId)
     res.json(await prisma.siteUpdate.findMany({ where: { taskId: task.id, status: 'APPROVED', isCurrent: true }, orderBy: { id: 'asc' } }))
