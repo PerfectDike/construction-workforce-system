@@ -82,8 +82,16 @@ function planChangeSummary(beforeText, afterText) {
   } catch { return 'Plan changed' }
 }
 
-function Planning({ workflow, busy, mutate, openWorkforce }) {
+function Planning({ workflow, busy, mutate, openWorkforce, token }) {
   const { task, baselines, allocations, planHistory = [] } = workflow
+  const [skills, setSkills] = useState([])
+  const [skillsLoaded, setSkillsLoaded] = useState(false)
+  useEffect(() => {
+    const controller = new AbortController()
+    call(`/projects/${task.project.sharedId}/skills`, { token, signal: controller.signal })
+      .then(result => { if (!controller.signal.aborted) { setSkills(result.skills); setSkillsLoaded(true) } }).catch(() => {})
+    return () => controller.abort()
+  }, [task.project.sharedId, token])
   const taskPath = `/tasks/${encodeURIComponent(task.sharedId ?? task.id)}`
   const [comparisonId, setComparisonId] = useState(String(baselines[0]?.id || ''))
   const [proposedStart, setProposedStart] = useState(day(task.startDate))
@@ -115,7 +123,8 @@ function Planning({ workflow, busy, mutate, openWorkforce }) {
       await mutate(taskPath, 'PATCH', {
         title: values.get('title').trim(), startDate: values.get('startDate'), reason: values.get('planReason')?.trim(),
         finishDate: values.get('finishDate'), isMilestone: values.has('isMilestone'),
-        predecessorIds: values.get('predecessors').split(',').map(id => id.trim()).filter(Boolean)
+        predecessorIds: values.get('predecessors').split(',').map(id => id.trim()).filter(Boolean),
+        ...(skillsLoaded ? { skillIds: values.getAll('skillIds').map(Number) } : {})
       })
       return 'Activity plan saved.'
     }}>
@@ -130,6 +139,7 @@ function Planning({ workflow, busy, mutate, openWorkforce }) {
         <label>Predecessor activity IDs (separate with commas)<input name="predecessors" aria-invalid={!!errors.predecessors} aria-describedby={errors.predecessors ? 'plan-predecessors-error' : undefined}
           defaultValue={task.predecessors.map(({ predecessor }) => predecessor.sharedId ?? predecessor.id).join(', ')} /></label>
         <FieldError id="plan-predecessors-error" message={errors.predecessors} />
+        <fieldset><legend>Required skills</legend>{skills.map(skill => <label key={skill.id}><input type="checkbox" name="skillIds" value={skill.id} defaultChecked={task.skills.some(row => row.skillId === skill.id)} /> {skill.name}</label>)}</fieldset>
         <label>Reason for change (optional)<input name="planReason" /></label>
       </>}
     </ActionForm>
@@ -149,6 +159,13 @@ function Planning({ workflow, busy, mutate, openWorkforce }) {
 }
 
 function ProjectTaskCreation({ projectId, token, onCreated }) {
+  const [skills, setSkills] = useState([])
+  useEffect(() => {
+    const controller = new AbortController()
+    call(`/projects/${encodeURIComponent(projectId)}/skills`, { token, signal: controller.signal })
+      .then(result => { if (!controller.signal.aborted) setSkills(result.skills) }).catch(() => {})
+    return () => controller.abort()
+  }, [projectId, token])
   return <section>
     <details className="action-panel"><summary>Create a project activity</summary>
       <p>Add an activity to the working schedule. It will be included in the next approved project baseline.</p>
@@ -157,7 +174,8 @@ function ProjectTaskCreation({ projectId, token, onCreated }) {
           taskCode: values.get('taskCode').trim().toUpperCase(), title: values.get('newTitle').trim(),
           startDate: values.get('newStartDate'), finishDate: values.get('newFinishDate'),
           isMilestone: values.has('newMilestone'),
-          predecessorIds: values.get('newPredecessors').split(',').map(id => id.trim()).filter(Boolean)
+          predecessorIds: values.get('newPredecessors').split(',').map(id => id.trim()).filter(Boolean),
+          skillIds: values.getAll('skillIds').map(Number)
         } })
         onCreated()
         return `Activity ${saved.sharedId} created. Select it from the activity list to review it.`
@@ -168,6 +186,7 @@ function ProjectTaskCreation({ projectId, token, onCreated }) {
         <label>Finish date<input name="newFinishDate" type="date" required /></label>
         <label><input name="newMilestone" type="checkbox" /> Milestone</label>
         <label>Predecessor activity IDs, separated by commas<input name="newPredecessors" /></label>
+        <fieldset><legend>Required skills</legend>{skills.map(skill => <label key={skill.id}><input type="checkbox" name="skillIds" value={skill.id} /> {skill.name}</label>)}</fieldset>
       </ActionForm>
     </details>
   </section>
@@ -250,20 +269,100 @@ function ProjectBaselineApproval({ projectId, projectName, token, openOverview, 
 }
 
 function ProjectAccounts({ projectId, token }) {
+  const [memberships, setMemberships] = useState([])
+  const [accounts, setAccounts] = useState([])
+  const [error, setError] = useState('')
+  const refresh = async () => {
+    const [members, users] = await Promise.all([
+      call(`/projects/${encodeURIComponent(projectId)}/memberships`, { token }),
+      call('/setup/accounts', { token })
+    ])
+    setMemberships(members.memberships)
+    setAccounts(users.accounts)
+  }
+  useEffect(() => { refresh().catch(err => setError(err.message)) }, [projectId, token])
   return <section>
-    <h2>Project accounts</h2>
-    <p>Give a team member access to this project and choose their role.</p>
-    <ActionForm button="Add project user" onSave={async values => {
-      const account = await call(`/projects/${encodeURIComponent(projectId)}/accounts`, { token, method: 'POST', data: {
-        loginLabel: values.get('loginLabel'), roleName: values.get('roleName')
+    <h2>Project access</h2>
+    <p>Assign an existing fictional account to this project. Its current sign-in details stay the same.</p>
+    {error && <p role="alert">{error}</p>}
+    <ul>{memberships.map(row => <li key={row.id}>{row.loginLabel} · {row.roleName?.replaceAll('_', ' ').toLowerCase()}</li>)}</ul>
+    <ActionForm button="Save project role" onSave={async values => {
+      const account = await call(`/projects/${encodeURIComponent(projectId)}/memberships/${values.get('userId')}`, { token, method: 'PUT', data: {
+        roleName: values.get('roleName')
       } })
-      return `${account.loginLabel} can now access this project as ${account.roleName.replace('_', ' ').toLowerCase()}.`
+      await refresh()
+      return `Project role saved: ${account.roleName.replaceAll('_', ' ').toLowerCase()}.`
     }}>
-      <label>User email<input name="loginLabel" type="email" pattern=".+@example\.test" required /></label>
+      <label>Account<select name="userId" required><option value="">Choose an account</option>
+        {accounts.map(row => <option key={row.id} value={row.id}>{row.loginLabel}</option>)}
+      </select></label>
       <label>Project role<select name="roleName" required>
         <option value="VIEWER">Viewer</option><option value="SITE_OFFICER">Site officer</option><option value="PROJECT_MANAGER">Project manager</option>
       </select></label>
     </ActionForm>
+  </section>
+}
+
+function AdminSetup({ token, onProjectCreated }) {
+  const [skills, setSkills] = useState([])
+  const [workers, setWorkers] = useState([])
+  const [error, setError] = useState('')
+  const refresh = async () => {
+    const [skillResult, workerResult] = await Promise.all([call('/setup/skills', { token }), call('/setup/workers', { token })])
+    setSkills(skillResult.skills)
+    setWorkers(workerResult.workers)
+  }
+  useEffect(() => { refresh().catch(err => setError(err.message)) }, [token])
+  return <section>
+    <p className="eyebrow">Administrator</p><h2>Project and worker setup</h2>
+    <p>Create fictional project and worker records for this study. Project IDs and worker IDs are assigned automatically.</p>
+    {error && <p role="alert">{error}</p>}
+    <details className="action-panel"><summary>Create project</summary>
+      <ActionForm button="Create project" onSave={async values => {
+        const project = await call('/setup/projects', { token, method: 'POST', data: { name: values.get('name'), description: values.get('description') } })
+        onProjectCreated(project)
+        return `${project.sharedId} created. Add activities and assign project roles next.`
+      }}>
+        <label>Project name<input name="name" maxLength="160" required /></label>
+        <label>Description<textarea name="description" maxLength="1000" /></label>
+      </ActionForm>
+    </details>
+    <details className="action-panel"><summary>Add a skill</summary>
+      <ActionForm button="Save skill" onSave={async values => {
+        const skill = await call('/setup/skills', { token, method: 'POST', data: { name: values.get('name') } })
+        await refresh()
+        return `${skill.name} is available for workers and activities.`
+      }}><label>Skill name<input name="name" maxLength="80" required /></label></ActionForm>
+    </details>
+    <details className="action-panel"><summary>Add a worker</summary>
+      <ActionForm button="Create worker" onSave={async values => {
+        const worker = await call('/setup/workers', { token, method: 'POST', data: { label: values.get('label'), dailyCapacityHours: Number(values.get('capacity')), skillIds: values.getAll('skillIds').map(Number) } })
+        await refresh()
+        return `${worker.sharedId} · ${worker.label} created.`
+      }}>
+        <label>Worker name<input name="label" maxLength="120" required /></label>
+        <label>Daily capacity (hours)<input name="capacity" type="number" min="0.01" max="24" step="0.01" defaultValue="8" required /></label>
+        <fieldset><legend>Skills</legend>{skills.map(skill => <label key={skill.id}><input type="checkbox" name="skillIds" value={skill.id} /> {skill.name}</label>)}</fieldset>
+      </ActionForm>
+    </details>
+    <h3>Worker directory</h3>
+    <div className="report-table-wrap"><table><thead><tr><th>ID</th><th>Worker</th><th>Daily capacity</th><th>Skills</th><th>Profile change</th></tr></thead><tbody>
+      {workers.map(worker => <tr key={worker.sharedId}><th scope="row">{worker.sharedId}</th><td>{worker.label}</td><td>{worker.dailyCapacityHours} hours</td><td>{worker.skills.join(', ') || 'None'}</td><td>
+        <details><summary>Edit</summary><ActionForm button="Save worker change" onSave={async values => {
+          const result = await call(`/setup/workers/${worker.sharedId}`, { token, method: 'PATCH', data: {
+            label: values.get('label'), dailyCapacityHours: Number(values.get('capacity')),
+            skillIds: values.getAll('skillIds').map(Number), reason: values.get('reason')
+          } })
+          await refresh()
+          return result.impactedAllocations.length ? `${result.impactedAllocations.length} existing allocation(s) need review: ${result.impactedAllocations.map(row => row.allocationId).join(', ')}.` : 'Worker profile saved. No allocation needs review.'
+        }}>
+          <label>Name<input name="label" defaultValue={worker.label} required /></label>
+          <label>Daily capacity<input name="capacity" type="number" min="0.01" max="24" step="0.01" defaultValue={worker.dailyCapacityHours} required /></label>
+          <fieldset><legend>Skills</legend>{skills.map(skill => <label key={skill.id}><input type="checkbox" name="skillIds" value={skill.id} defaultChecked={worker.skillIds.includes(skill.id)} /> {skill.name}</label>)}</fieldset>
+          <label>Reason for change<input name="reason" required /></label>
+        </ActionForm></details>
+      </td></tr>)}
+    </tbody></table></div>
   </section>
 }
 
@@ -499,7 +598,7 @@ function TaskWorkspace({ taskId, session, section, reportBaselineId, onTasksChan
     {workflow && <>
       <h2>{workflow.task.sharedId ?? workflow.task.taskCode} · {workflow.task.title}</h2>
       <p>{workflow.task.project.name} · Working dates {day(workflow.task.startDate)} to {day(workflow.task.finishDate)}</p>
-      {section === 'planning' && workflow.permissions.plan && <Planning workflow={workflow} busy={busy} mutate={mutate} openWorkforce={openWorkforce} />}
+      {section === 'planning' && workflow.permissions.plan && <Planning workflow={workflow} busy={busy} mutate={mutate} openWorkforce={openWorkforce} token={session.token} />}
       {section === 'workforce' && <Workforce workflow={workflow} busy={busy} mutate={mutate} token={token} />}
       {section === 'site' && <SiteUpdates workflow={workflow} busy={busy} mutate={mutate} />}
       {section === 'reports' && workflow.task.sharedId && <TaskReport workflow={workflow} token={token} baselineId={reportBaselineId} />}
@@ -569,9 +668,39 @@ function ProjectReports({ session, projectId, openTask, openPlanning, canManage,
   const [to, setTo] = useState('')
   const [report, setReport] = useState(null)
   const [error, setError] = useState('')
+  const [pendingUpdates, setPendingUpdates] = useState([])
   const token = session.token
 
   useEffect(() => { if (mode === 'reports') setReport(null) }, [mode])
+  useEffect(() => {
+    if (!canManage || mode !== 'overview') return
+    const controller = new AbortController()
+    call(`/projects/${encodeURIComponent(projectId)}/pending-updates`, { token, signal: controller.signal })
+      .then(result => { if (!controller.signal.aborted) setPendingUpdates(result.updates) })
+      .catch(() => { if (!controller.signal.aborted) setPendingUpdates([]) })
+    return () => controller.abort()
+  }, [projectId, token, canManage, mode])
+
+  function downloadCsv() {
+    if (!report) return
+    const columns = ['Project ID', 'Baseline version', 'Report date', 'Period start', 'Period end', 'Activity ID', 'Activity', 'Status', 'Baseline finish', 'Actual finish', 'Finish variance days', 'Planned hours', 'Recorded hours', 'Baseline source ID', 'Allocation source IDs', 'Update source IDs']
+    const safe = value => {
+      const raw = value == null ? '' : String(value)
+      const protectedText = /^[=+@\-\t\r]/.test(raw) ? `'${raw}` : raw
+      return `"${protectedText.replaceAll('"', '""')}"`
+    }
+    const rows = report.tasks.map(row => [report.project.sharedId, report.baseline.versionNo, report.reportDate,
+      report.from, report.to, row.taskId, row.title, row.status, day(row.baselineFinish), day(row.actualFinish),
+      row.finishVarianceDays, row.plannedHours, row.recordedHours, row.sources.baselineId,
+      row.sources.allocations.map(source => source.id).join('; '), row.sources.updates.map(source => source.id).join('; ')])
+    const csv = [columns, ...rows].map(row => row.map(safe).join(',')).join('\r\n')
+    const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `CWS-${report.project.sharedId}-baseline-${report.baseline.versionNo}-${report.reportDate}.csv`
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
 
   useEffect(() => {
     setBaselines([])
@@ -632,6 +761,7 @@ function ProjectReports({ session, projectId, openTask, openPlanning, canManage,
     {report && <>
       <h3>{report.project.name} · baseline version {report.baseline.versionNo}</h3>
       <p>Report date {report.reportDate}. Hours period {report.from} to {report.to}.</p>
+      {mode === 'reports' && <button type="button" onClick={downloadCsv}>Download this report (CSV)</button>}
       <div className="metric-grid">
         <div className="metric"><span>Activities</span><strong>{report.totals.taskCount}</strong></div>
         <div className="metric metric-attention"><span>No progress report</span><strong>{report.tasks.filter(row => row.status === 'not_reported').length}</strong></div>
@@ -648,6 +778,12 @@ function ProjectReports({ session, projectId, openTask, openPlanning, canManage,
           <span>{row.overdue ? 'Overdue' : 'Not reported'}</span>
         </li>)}</ul>
         {!report.tasks.some(row => row.overdue || row.status === 'not_reported') && <p>No tasks need attention under these report rules.</p>}
+      </div>}
+      {mode === 'overview' && canManage && <div className="overview-list"><h3>Site updates awaiting a decision</h3>
+        {pendingUpdates.length ? <ul>{pendingUpdates.map(row => <li key={row.id}>
+          <button type="button" className="text-button" onClick={() => openTask(row.taskId)}>{row.taskId} · {row.title}</button>
+          <span>Update {row.id} · {day(row.workDate)} · {row.author}</span>
+        </li>)}</ul> : <p>No site updates are awaiting a decision.</p>}
       </div>}
       {mode === 'reports' && <div className="report-table-wrap"><table>
         <thead><tr><th scope="col">Task</th><th scope="col">Status</th><th scope="col">Baseline finish</th><th scope="col">Actual finish</th><th scope="col">Variance</th><th scope="col">Planned hours</th><th scope="col">Recorded hours</th><th scope="col">Evidence</th></tr></thead>
@@ -669,7 +805,13 @@ function ProjectReports({ session, projectId, openTask, openPlanning, canManage,
 }
 
 function App() {
-  const [session, setSession] = useState(null)
+  const [session, setSession] = useState(() => {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('cws-session') || 'null')
+      const payload = saved?.token && JSON.parse(atob(saved.token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+      return payload?.exp * 1000 > Date.now() ? saved : null
+    } catch { return null }
+  })
   const [projects, setProjects] = useState([])
   const [projectTasks, setProjectTasks] = useState([])
   const [projectId, setProjectId] = useState('')
@@ -684,6 +826,17 @@ function App() {
   const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.search).get('resetToken') || '')
   const [recoveryMode, setRecoveryMode] = useState(false)
   const [recoveryMessage, setRecoveryMessage] = useState('')
+  useEffect(() => {
+    if (session) sessionStorage.setItem('cws-session', JSON.stringify(session))
+    else sessionStorage.removeItem('cws-session')
+  }, [session])
+  useEffect(() => {
+    if (!session) return
+    let expiry = 0
+    try { expiry = JSON.parse(atob(session.token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).exp * 1000 } catch { setSession(null); return }
+    const timer = setTimeout(() => setSession(null), Math.max(0, expiry - Date.now()))
+    return () => clearTimeout(timer)
+  }, [session])
   useEffect(() => {
     if (!session) { setProjects([]); setProjectId(''); return }
     const controller = new AbortController()
@@ -704,18 +857,20 @@ function App() {
   const selectedProject = projects.find(project => project.sharedId === projectId)
   const canManage = selectedProject && ['ADMIN', 'PROJECT_MANAGER'].includes(selectedProject.role)
   const canSite = selectedProject && ['ADMIN', 'PROJECT_MANAGER', 'SITE_OFFICER'].includes(selectedProject.role)
+  const isAdmin = session?.user.role === 'ADMIN'
   const sections = [
+    ...(isAdmin ? [['setup', 'Setup']] : []),
     ['overview', 'Overview'],
     ...(canManage ? [['planning', 'Planning'], ['workforce', 'Workforce']] : []),
     ...(canSite ? [['site', 'Site updates']] : []),
     ['reports', 'Reports']
   ]
-  useEffect(() => { if (!sections.some(([key]) => key === section)) setSection('overview') }, [projectId, section, canManage, canSite])
+  useEffect(() => { if (!sections.some(([key]) => key === section)) setSection(isAdmin ? 'setup' : 'overview') }, [projectId, section, canManage, canSite, isAdmin])
   return <main className={session ? 'app-shell' : 'auth-shell'}>
     <header className="app-header"><div className="brand"><p className="eyebrow">Construction Workforce System</p><h1>CWS</h1></div>
       {session && <>
-        {selectedProject && <button className="menu-toggle" type="button" aria-controls="main-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}>{menuOpen ? 'Close menu' : 'Menu'}</button>}
-        {selectedProject && <nav id="main-navigation" className={`workspace-nav${menuOpen ? ' is-open' : ''}`} aria-label="Main navigation">{sections.map(([key, label]) => <button key={key} type="button"
+        {(selectedProject || isAdmin) && <button className="menu-toggle" type="button" aria-controls="main-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}>{menuOpen ? 'Close menu' : 'Menu'}</button>}
+        {(selectedProject || isAdmin) && <nav id="main-navigation" className={`workspace-nav${menuOpen ? ' is-open' : ''}`} aria-label="Main navigation">{sections.map(([key, label]) => <button key={key} type="button"
           aria-current={section === key ? 'page' : undefined} onClick={() => { setSection(key); setMenuOpen(false) }}>{label}</button>)}</nav>}
         <div className="account"><span>{session.user.loginLabel}</span><button type="button" onClick={() => { setSession(null); setReportBaselineId(''); setTaskId(''); setSection('overview'); setMenuOpen(false) }}>Sign out</button></div>
       </>}
@@ -749,9 +904,11 @@ function App() {
       <h2>Sign in</h2>
       {recoveryMessage && <p role="status">{recoveryMessage}</p>}
       <ActionForm button="Sign in" onSave={async values => {
-        setSession(await call('/auth/login', {
+        const signedIn = await call('/auth/login', {
           method: 'POST', data: { loginLabel: values.get('email'), password: values.get('password') }
-        }))
+        })
+        setSession(signedIn)
+        setSection(signedIn.user.role === 'ADMIN' ? 'setup' : 'overview')
       }}>
         <label>Email<input name="email" type="email" autoComplete="username" required /></label>
         <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>
@@ -764,7 +921,7 @@ function App() {
       </select></label>{selectedProject && <p className="project-context">Your role: {selectedProject.role.replaceAll('_', ' ').toLowerCase()}</p>}</div>}
       {selectedProject && <>
       {section === 'planning' && canManage && <nav className="planning-nav" aria-label="Planning areas">
-        {[['activity', 'Activities'], ['baseline', 'Approve schedule'], ['accounts', 'Project accounts']].map(([key, label]) =>
+        {[['activity', 'Activities'], ['baseline', 'Approve schedule'], ...(isAdmin ? [['accounts', 'Project access']] : [])].map(([key, label]) =>
           <button key={key} type="button" aria-current={planningPanel === key ? 'page' : undefined}
             onClick={() => setPlanningPanel(key)}>{label}</button>)}
       </nav>}
@@ -791,6 +948,10 @@ function App() {
       {section === 'planning' && planningPanel === 'activity' && <ProjectTaskCreation projectId={projectId}
         token={session.token} onCreated={() => setTaskListVersion(current => current + 1)} />}
       </>}
+      {isAdmin && section === 'setup' && <AdminSetup token={session.token} onProjectCreated={project => {
+        setProjects(current => [...current, { ...project, role: 'ADMIN' }])
+        setProjectId(project.sharedId)
+      }} />}
     </>}
   </main>
 }
